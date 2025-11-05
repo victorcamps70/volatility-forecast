@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "volforecast"
+version = "0.1.0"
+description = "Comparison of volatility forecasting methods: GARCH vs ML"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Victor Camps" },
+  { name = "Saïd Tellez" },
+  { name = "Steven Yu" }
+]
+dependencies = [
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "arch>=6.4",
+  "matplotlib",
+  "jupyter"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+  "black",
+  "ipykernel"
+]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+extend-select = ["E","F","B","I"]

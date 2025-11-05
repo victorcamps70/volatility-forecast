@@ -1,0 +1,12 @@
+dataset:
+  csv_path: "data/AAPL.csv"
+  date_col: "Date"
+  price_col: "Close"
+  vix_col: null
+  market_close_col: null
+
+modeling:
+  target: "next_squared_return_stock"  # or "5_day_ahead_return_stock"
+
+backtest:
+  test_size: 252
