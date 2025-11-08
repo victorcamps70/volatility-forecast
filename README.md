@@ -37,7 +37,7 @@ This repository compares **GARCH** models versus **Machine Learning** methods fo
 1. **Install** (preferably in a virtualenv):
 
    ```bash
-   pip install -e .[dev]
+   pip install -e .   #[dev]
    ```
 
 2. **Put your CSVs** in `data/`. Example expected columns:
@@ -133,7 +133,6 @@ See the [`docs/`](docs/) folder for:
 
 # TODO:
 
-- Test the GARCH Model in the notebook
 - Comment the results of the GARCH Model
 - Comment the results of the ENet CV Model
 - Code the LSTM Model
@@ -147,7 +146,8 @@ See the [`docs/`](docs/) folder for:
 - Make the .md that are still not there
 - Import the results into reports --> not done yet
 - Import the data loader and test it
-- Update the format of the .py (mettre à niveau mes .py pour qu'ils soient tous pareil)
 - Add a run_all.py to make sure that we can run all the results at once
 - Finetune the models to have better results
 - Add stress and time tests to better the code
+- Change the figure of Enet model --> to the new format of graph
+- Do a rolling elasticnet model

@@ -1,23 +1,51 @@
 from __future__ import annotations
-import numpy as np
 import pandas as pd
-from .metrics import qlike_loss, rmse, mae
+from typing import Dict, Any
+from src.volforecast.metrics import qlike_loss, rmse as rmse_loss, mae as mae_loss
 
 
-def rolling_backtest(
-    model, df: pd.DataFrame, n_test: int = 252, target_col: str = "target"
-) -> dict:
-    """Generic rolling-origin evaluation using a model with fit/predict/evaluate signatures."""
-    X, y = model._build_X_y(df)  # reuse model's feature builder for consistency
-    N = len(X)
-    if n_test <= 0 or n_test >= N:
-        raise ValueError("n_test must be in (0, N)")
-    X_train, X_test = X.iloc[: N - n_test], X.iloc[N - n_test :]
-    target = model._build_target(df).loc[X_test.index].clip(lower=0)
-    model.fit(df.iloc[: N - n_test])
-    y_hat = model.predict(df.iloc[N - n_test :]).reindex(target.index)
-    return {
-        "RMSE": rmse(target, np.maximum(y_hat, 0.0)),
-        "MAE": mae(target, np.maximum(y_hat, 0.0)),
-        "QLIKE": qlike_loss(target.values, np.maximum(y_hat, 0.0).values),
+def rolling_backtest(model, df: pd.DataFrame, train_start, train_end, step="1D") -> Dict[str, Any]:
+    """
+    Expanding or sliding window:
+    - fit on df.loc[:train_end]
+    - predict on next 'step'
+    - advance window; repeat
+    """
+    y_pred_list = []
+    y_true_list = []
+
+    current_end = pd.to_datetime(train_end)
+    while True:
+        train_df = df.loc[:current_end]
+        if train_df.empty:
+            break
+
+        model.fit(train_df)
+
+        # predict on the next period
+        next_start = current_end + pd.tseries.frequencies.to_offset(step)
+        test_df = df.loc[next_start:next_start]
+        if test_df.empty:
+            break
+
+        pred = model.predict(test_df)
+        true = model.build_target(test_df)
+        y_pred_list.append(pred)
+        y_true_list.append(true)
+
+        current_end = next_start  # move forward
+
+    y_pred = pd.concat(y_pred_list).rename("y_pred")
+    y_true = pd.concat(y_true_list).rename("y_true")
+
+    # metrics
+    from .metrics import rmse, mae, qlike
+
+    valid = y_true.notna() & y_pred.notna()
+    metrics = {
+        "RMSE": rmse_loss(y_true[valid], y_pred[valid]),
+        "MAE": mae_loss(y_true[valid], y_pred[valid]),
+        "QLIKE": qlike_loss(y_true[valid], y_pred[valid]),
+        "n": int(valid.sum()),
     }
+    return {"metrics": metrics, "y_true": y_true, "y_pred": y_pred}
