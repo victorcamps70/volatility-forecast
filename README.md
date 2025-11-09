@@ -109,7 +109,7 @@ Both models are compared on accuracy metrics such as **RMSE**, **MAE**, and **QL
   capturing _volatility clustering_.
 
   $$
-  \sigma*t^2 = \omega + \alpha \epsilon*{t-1}^2 + \beta \sigma\_{t-1}^2
+  \min_{\beta} \|y - X\beta\|_2^2 + \alpha ((1 - l_1)\|\beta\|_2^2 + l_1\|\beta\|_1)
   $$
 
 - **ElasticNet Regression** combines Lasso (L1) and Ridge (L2) regularization:
