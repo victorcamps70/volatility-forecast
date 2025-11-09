@@ -113,7 +113,6 @@ Both models are compared on accuracy metrics such as **RMSE**, **MAE**, and **QL
   $$
   \min_{\beta} \|y - X\beta\|\_2^2 + \alpha[(1 - l_1)\|\beta\|_2^2 + l_1\|\beta\|_1
   $$
-  
   controlling both overfitting and feature selection.
 
 The ElasticNet is fed with:
