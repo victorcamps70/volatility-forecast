@@ -115,7 +115,7 @@ Both models are compared on accuracy metrics such as **RMSE**, **MAE**, and **QL
   $$
 
   $$
-  \| y - X \beta \|_2^2
+  y - X \beta _2^2
   $$
 
 
