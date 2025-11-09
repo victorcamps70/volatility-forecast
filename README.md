@@ -115,7 +115,7 @@ Both models are compared on accuracy metrics such as **RMSE**, **MAE**, and **QL
   $$
 
   $$
-  \sigma*t^2 = \omega + \alpha \epsilon*{t-1}^2 + \beta \sigma\_{t-1}^2
+  y - X \beta _2^2
   $$
 
 
