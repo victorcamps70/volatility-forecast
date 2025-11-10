@@ -2,7 +2,7 @@ from __future__ import annotations
 import pandas as pd
 
 
-class ElasticNetFeatureBuilder:
+class FeatureBuilder:
     def __init__(
         self,
         lags_returns=(1, 2, 5),

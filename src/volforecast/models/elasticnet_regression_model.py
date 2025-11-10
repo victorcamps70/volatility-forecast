@@ -7,7 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
 from src.volforecast.models.base import BaseVolModel, BaseConfig
-
+from ..features.builders import FeatureBuilder
 
 @dataclass
 class ElasticNetConfig(BaseConfig):
@@ -19,7 +19,7 @@ class ElasticNetConfig(BaseConfig):
 
 
 class ElasticNetVolModel(BaseVolModel):
-    def __init__(self, config: ElasticNetConfig, feature_builder):
+    def __init__(self, config: ElasticNetConfig, feature_builder:FeatureBuilder):
         super().__init__(config)
         self.feature_builder = feature_builder
         self.pipeline: Pipeline | None = None
