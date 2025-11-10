@@ -100,7 +100,7 @@ class ElasticNetVolModel(BaseVolModel):
 
 if __name__ == "__main__":
     import pandas as pd
-    from volforecast.features.builders import ElasticNetFeatureBuilder
+    from volforecast.features.builders import FeatureBuilder
 
     print("Running basic self-test for ElasticNetVolModel...")
 
