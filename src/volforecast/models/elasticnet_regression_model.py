@@ -1,4 +1,4 @@
-from __future__ import annotations
+from typing import Tuple, List, Dict, Any
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
@@ -11,8 +11,8 @@ from ..features.builders import FeatureBuilder
 
 @dataclass
 class ElasticNetConfig(BaseConfig):
-    alphas: tuple = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
-    l1_ratio: tuple = (0.1, 0.5, 0.9)
+    alphas: Tuple[float, ...] = (1e-4, 1e-3, 1e-2, 1e-1, 1.0)
+    l1_ratio: Tuple[float, ...] = (0.1, 0.5, 0.9)
     cv_splits: int = 5
     use_log_target: bool = True
     scale_features: bool = True
@@ -43,7 +43,7 @@ class ElasticNetVolModel(BaseVolModel):
         valid = X.notna().all(axis=1) & y.notna()
         X, y = X[valid], y[valid]
 
-        steps = []
+        steps:List[Tuple[str, Any]] = []
         if self.config.scale_features:
             steps.append(("scaler", StandardScaler()))
         steps.append(
@@ -90,7 +90,7 @@ class ElasticNetVolModel(BaseVolModel):
         return yhat.clip(lower=0.0).rename("y_pred")
 
     # optional
-    def summary(self):
+    def summary(self) -> Dict[str, Any]:
         return {
             "coefficients": None if self.coef_ is None else self.coef_.to_dict(),
             "best_alpha": getattr(self.pipeline.named_steps["enet"], "alpha_", None),
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     # 2. Build config and feature builder
     base_cfg = BaseConfig()
     enet_cfg = ElasticNetConfig(**base_cfg.__dict__)
-    builder = ElasticNetFeatureBuilder(lags_returns=(1, 2))
+    builder = FeatureBuilder(lags_returns=(1, 2))
     model = ElasticNetVolModel(enet_cfg, builder)
 
     # 3. Fit & predict

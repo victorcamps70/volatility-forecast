@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from src.volforecast.evaluation.metrics import rmse as rmse_loss, mae as mae_loss, qlike_loss
 
 
