@@ -2,7 +2,16 @@ from __future__ import annotations
 import pandas as pd
 from dataclasses import dataclass
 from arch import arch_model
+from typing import Literal, Optional, cast
+from arch.univariate.base import ARCHModelResult
+
 from src.volforecast.models.base import BaseVolModel, BaseConfig
+
+DistName = Literal[
+    "normal", "gaussian", "t", "studentst", "skewstudent", "skewt", "ged", "generalized error"
+]
+
+MeanName = Literal["zero", "constant", "AR", "HAR"]
 
 
 @dataclass
@@ -10,16 +19,16 @@ class GARCHConfig(BaseConfig):
     p: int = 1
     q: int = 1
     o: int = 0
-    dist: str = "normal"
-    mean: str = "zero"
+    dist: DistName = "normal"
+    mean: MeanName = "zero"
     scale_factor: float = 1.0  # to rescale returns if needed
     rescale_returns: bool = False  # whether to rescale returns by scale_factor
 
 
-class GARCHVolModel(BaseVolModel):
+class GARCHVolModel(BaseVolModel[GARCHConfig]):
     def __init__(self, config: GARCHConfig):
         super().__init__(config)
-        self.res_ = None
+        self.res_: Optional[ARCHModelResult] = None
         self.fitted_: bool = False
 
     def fit(self, df: pd.DataFrame) -> "GARCHVolModel":
@@ -39,7 +48,8 @@ class GARCHVolModel(BaseVolModel):
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
         assert self.fitted_, "Call fit() first."
-        h = self.res_.forecast(horizon=1, start=0, reindex=True).variance.iloc[:, 0]
+        res = cast(ARCHModelResult, self.res_)
+        h = res.forecast(horizon=1, start=0, reindex=True).variance.iloc[:, 0]
 
         if self.config.rescale_returns:
             h = h * (self.config.scale_factor**2)
