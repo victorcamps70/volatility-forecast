@@ -19,7 +19,8 @@ dependencies = [
   "scikit-learn",
   "arch>=6.4",
   "matplotlib",
-  "jupyter"
+  "jupyter",
+  "xgboost"
 ]
 
 [project.optional-dependencies]

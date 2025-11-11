@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import pandas as pd
-from typing import Dict, Any
+from typing import Dict, Any, Generic, TypeVar
 from src.volforecast.evaluation.metrics import rmse as rmse_loss, mae as mae_loss, qlike_loss
 
 
@@ -13,8 +13,11 @@ class BaseConfig:
     eps: float = 1e-8  # for log transforms
 
 
-class BaseVolModel:
-    def __init__(self, config: BaseConfig):
+C = TypeVar("C", bound=BaseConfig)
+
+
+class BaseVolModel(Generic[C]):
+    def __init__(self, config: C):
         self.config = config
 
     # REQUIRED — uniform across all models
