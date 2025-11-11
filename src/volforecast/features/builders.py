@@ -1,23 +1,15 @@
 from __future__ import annotations
 import pandas as pd
+from dataclasses import dataclass
 
-
+@dataclass
 class FeatureBuilder:
-    def __init__(
-        self,
-        lags_returns=(1, 2, 5),
-        lags_vix=(1, 2),
-        add_dow=True,
-        date_col="date",
-        return_col="log_return_AAPL",
-        vix_col="vix",
-    ):
-        self.lags_returns = lags_returns
-        self.lags_vix = lags_vix
-        self.add_dow = add_dow
-        self.date_col = date_col
-        self.return_col = return_col
-        self.vix_col = vix_col
+    lags_returns=(1, 2, 5)
+    lags_vix=(1, 2)
+    add_dow=True
+    date_col="date"
+    return_col="log_return_AAPL"
+    vix_col="vix"
 
     def build_features(self, df: pd.DataFrame) -> pd.DataFrame:
         X = pd.DataFrame(index=df.index)
