@@ -9,7 +9,7 @@ class FeatureBuilder:
         lags_vix=(1, 2),
         add_dow=True,
         date_col="date",
-        return_col="log_return",
+        return_col="log_return_AAPL",
         vix_col="vix",
     ):
         self.lags_returns = lags_returns

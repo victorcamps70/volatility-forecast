@@ -6,7 +6,7 @@ import numpy as np
 from xgboost import XGBRegressor
 
 from src.volforecast.models.base import BaseVolModel, BaseConfig
-from ..features.builders import FeatureBuilder
+from src.volforecast.features.builders import FeatureBuilder
 
 
 @dataclass

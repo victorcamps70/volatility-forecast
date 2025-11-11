@@ -7,7 +7,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
 from src.volforecast.models.base import BaseVolModel, BaseConfig
-from ..features.builders import FeatureBuilder
+from src.volforecast.features.builders import FeatureBuilder
+
 
 @dataclass
 class ElasticNetConfig(BaseConfig):
@@ -19,7 +20,7 @@ class ElasticNetConfig(BaseConfig):
 
 
 class ElasticNetVolModel(BaseVolModel):
-    def __init__(self, config: ElasticNetConfig, feature_builder:FeatureBuilder):
+    def __init__(self, config: ElasticNetConfig, feature_builder: FeatureBuilder):
         super().__init__(config)
         self.feature_builder = feature_builder
         self.pipeline: Pipeline | None = None
@@ -43,7 +44,7 @@ class ElasticNetVolModel(BaseVolModel):
         valid = X.notna().all(axis=1) & y.notna()
         X, y = X[valid], y[valid]
 
-        steps:List[Tuple[str, Any]] = []
+        steps: List[Tuple[str, Any]] = []
         if self.config.scale_features:
             steps.append(("scaler", StandardScaler()))
         steps.append(
@@ -99,8 +100,6 @@ class ElasticNetVolModel(BaseVolModel):
 
 
 if __name__ == "__main__":
-    import pandas as pd
-    from volforecast.features.builders import FeatureBuilder
 
     print("Running basic self-test for ElasticNetVolModel...")
 
@@ -108,13 +107,13 @@ if __name__ == "__main__":
     df = pd.DataFrame(
         {
             "date": pd.date_range("2020-01-01", periods=10, freq="D"),
-            "log_return": [0.01, -0.02, 0.015, 0.005, -0.01, 0.02, 0.0, 0.01, -0.005, 0.002],
+            "log_return_AAPL": [0.01, -0.02, 0.015, 0.005, -0.01, 0.02, 0.0, 0.01, -0.005, 0.002],
             "vix": [20, 21, 19, 18, 22, 21, 20, 19, 20, 22],
         }
     ).set_index("date")
 
     # 2. Build config and feature builder
-    base_cfg = BaseConfig()
+    base_cfg = BaseConfig(date_col="date", return_col="log_return_AAPL")
     enet_cfg = ElasticNetConfig(**base_cfg.__dict__)
     builder = FeatureBuilder(lags_returns=(1, 2))
     model = ElasticNetVolModel(enet_cfg, builder)
