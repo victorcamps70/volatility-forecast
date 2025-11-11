@@ -136,11 +136,11 @@ See the [`docs/`](docs/) folder for:
 - Comment the results of the GARCH Model
 - Comment the results of the ENet CV Model
 - Code the LSTM Model
-- Code the NN Model
+- Code the XGBOOST Model
 - Test the LSTM Model
-- Test the NN Model
+- Test the XGBOOST Model
 - Comment results of the LSTM Model
-- Comment results of the NN Model
+- Comment results of the XGBOOST Model
 - Make sure there's no redundancies between Enet and evaluation, and evaluation files
 - Comment the choices made on the Enet Model
 - Make the .md that are still not there

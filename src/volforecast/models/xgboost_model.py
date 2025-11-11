@@ -77,3 +77,32 @@ class XGBoostVolModel(BaseVolModel):
                 zip(self.model.feature_names_in_, self.model.feature_importances_.tolist())
             ),
         }
+
+
+if __name__ == "__main__":
+    import sys
+
+    print(sys.executable)
+    print("Running basic self-test for ElasticNetVolModel...")
+
+    # 1. Create small dummy dataset
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2020-01-01", periods=10, freq="D"),
+            "log_return_AAPL": [0.01, -0.02, 0.015, 0.005, -0.01, 0.02, 0.0, 0.01, -0.005, 0.002],
+            "vix": [20, 21, 19, 18, 22, 21, 20, 19, 20, 22],
+        }
+    ).set_index("date")
+
+    # 2. Build config and feature builder
+    base_cfg = BaseConfig(date_col="date", return_col="log_return_AAPL")
+    xgboost_cfg = XGBoostConfig(**base_cfg.__dict__)
+    builder = FeatureBuilder(lags_returns=(1, 2))
+    model = XGBoostVolModel(xgboost_cfg, builder)
+
+    # 3. Fit & predict
+    model.fit(df)
+    y_pred = model.predict(df)
+
+    print("Predictions:")
+    print(y_pred.head())
