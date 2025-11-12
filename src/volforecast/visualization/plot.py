@@ -1,16 +1,16 @@
 import matplotlib.pyplot as plt
+import numpy as np
 from pathlib import Path
 import pandas as pd
 
 
 def plot_and_save_volatility_forecast(
-    df: pd.DataFrame,
-    model,
-    log_return_col: str = "log_return_AAPL",
+    res: dict,
     title: str = "Volatility Forecast",
     show: bool = True,
     save: bool = True,
     save_name: str | None = None,
+    plot_as_vol: bool = True,
 ):
     """
     Plots and saves actual vs predicted next-day volatility (squared return).
@@ -25,23 +25,30 @@ def plot_and_save_volatility_forecast(
         save_name (str | None): Custom filename (without extension).
 
     Returns:
-        target_raw (pd.Series): Actual next-day variance.
-        y_pred (pd.Series): Predicted variance.
+        None
     """
     # --- Prepare data ---
-    y_pred = model.predict(df)
-    target_raw = (df[log_return_col] ** 2).shift(-1)
-    target_raw = target_raw.loc[y_pred.index].dropna()
-    y_pred = y_pred.loc[target_raw.index]
+    y_true = res["y_true"]
+    y_pred = res["y_pred"]
+    valid = y_true.notna() & y_pred.notna()
+    y_true = y_true[valid].rename("Realized")
+    y_pred = y_pred[valid].rename("Predicted")
 
-    # --- Plot ---
-    plt.figure(figsize=(10, 4))
-    plt.plot(target_raw.index, target_raw.values, label="Actual (next squared return)", alpha=0.7)
-    plt.plot(y_pred.index, y_pred.values, label="Predicted variance", alpha=0.9)
-    plt.legend()
+    if plot_as_vol:
+        y_true = np.sqrt(y_true.clip(lower=0))
+        y_pred = np.sqrt(y_pred.clip(lower=0))
+        y_label = "Volatility"
+    else:
+        y_label = "Variance (squared return)"
+
+    # Plotting
+    plt.figure(figsize=(12, 4))
+    plt.plot(y_true.index, y_true.values, label="Realized")
+    plt.plot(y_pred.index, y_pred.values, label="Predicted")
     plt.title(title)
     plt.xlabel("Date")
-    plt.ylabel("Variance (squared return)")
+    plt.ylabel(y_label)
+    plt.legend()
     plt.tight_layout()
 
     # --- Save figure ---
@@ -50,8 +57,7 @@ def plot_and_save_volatility_forecast(
         reports_dir.mkdir(parents=True, exist_ok=True)
 
         if save_name is None:
-            model_name = model.__class__.__name__
-            save_name = f"{model_name}_forecast_plot.png"
+            save_name = f"{title.lower().replace(' ', '_')}_forecast_plot.png"
 
         save_path = reports_dir / save_name
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -63,4 +69,10 @@ def plot_and_save_volatility_forecast(
     else:
         plt.close()
 
-    return target_raw, y_pred
+    # print metrics for convenience
+    print("\nMetrics:")
+    for k, v in res.get("metrics", {}).items():
+        try:
+            print(f"{k}: {float(v):.6f}")
+        except Exception:
+            print(f"{k}: {v}")

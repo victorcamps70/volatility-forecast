@@ -50,12 +50,13 @@ class GARCHVolModel(BaseVolModel[GARCHConfig]):
         assert self.fitted_, "Call fit() first."
         res = cast(ARCHModelResult, self.res_)
         h = res.forecast(horizon=1, start=0, reindex=True).variance.iloc[:, 0]
+        h = h.shift(1)
 
         if self.config.rescale_returns:
             h = h * (self.config.scale_factor**2)
 
         # align to incoming df index, forward-fill if needed
-        yhat = h.reindex(df.index).rename("y_pred")
+        yhat = h.reindex(df.index, method="ffill").rename("y_pred")
         return yhat
 
 
@@ -92,4 +93,4 @@ if __name__ == "__main__":
         mae = (y_true[valid] - y_pred[valid]).abs().mean()
         print(f"\nMean Absolute Error (sanity check): {mae:.6e}")
 
-    print("\n✅ GARCHVolModel self-test finished.")
+    print("\n GARCHVolModel self-test finished.")
