@@ -71,6 +71,7 @@ class ElasticNetVolModel(BaseVolModel):
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
         assert self.fitted_, "Call fit() first."
+        assert self.pipeline is not None, "Call fit() first"
         X = self._build_X(df)
 
         # keep only rows with all features present
@@ -92,6 +93,7 @@ class ElasticNetVolModel(BaseVolModel):
 
     # optional
     def summary(self) -> Dict[str, Any]:
+        assert self.pipeline is not None, "Call fit() first"
         return {
             "coefficients": None if self.coef_ is None else self.coef_.to_dict(),
             "best_alpha": getattr(self.pipeline.named_steps["enet"], "alpha_", None),

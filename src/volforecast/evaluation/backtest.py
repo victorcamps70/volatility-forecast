@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pandas as pd
 from typing import Dict, Any
-from src.volforecast.metrics import qlike_loss, rmse as rmse_loss, mae as mae_loss
+from src.volforecast.evaluation.metrics import qlike_loss, rmse as rmse_loss, mae as mae_loss
 
 
 def rolling_backtest(model, df: pd.DataFrame, train_start, train_end, step="1D") -> Dict[str, Any]:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import pandas as pd
 import numpy as np
 from xgboost import XGBRegressor
@@ -24,7 +24,7 @@ class XGBoostVolModel(BaseVolModel):
     def __init__(self, config: XGBoostConfig, feature_builder: FeatureBuilder):
         super().__init__(config)
         self.feature_builder = feature_builder
-        self.model: XGBRegressor | None = None
+        self.model: Optional[XGBRegressor] = None
         self.fitted_: bool = False
 
     def _build_X(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -42,7 +42,7 @@ class XGBoostVolModel(BaseVolModel):
         valid = X.notna().all(axis=1) & y.notna()
         X, y = X[valid], y[valid]
 
-        self.model = XGBRegressor(
+        model = XGBRegressor(
             n_estimators=self.config.n_estimators,
             learning_rate=self.config.learning_rate,
             max_depth=self.config.max_depth,
@@ -51,12 +51,14 @@ class XGBoostVolModel(BaseVolModel):
             random_state=self.config.random_state,
         )
 
-        self.model.fit(X, y)
+        model.fit(X, y)
+        self.model = model  # in 2 steps to prevent pylance issues
         self.fitted_ = True
         return self
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
         assert self.fitted_, "Call fit() first."
+        assert self.model is not None, "Call fit() first"
         X = self._build_X(df)
         valid = X.notna().all(axis=1)
         Xv = X[valid]
