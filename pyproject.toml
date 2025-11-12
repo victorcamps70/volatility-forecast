@@ -20,7 +20,8 @@ dependencies = [
   "arch>=6.4",
   "matplotlib",
   "jupyter",
-  "xgboost"
+  "xgboost",
+  "pytorch"
 ]
 
 [project.optional-dependencies]
