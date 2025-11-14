@@ -1,22 +1,30 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 import pandas as pd
 import numpy as np
 from xgboost import XGBRegressor
+from sklearn.metrics import make_scorer
+from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
 
 from src.volforecast.models.base import BaseVolModel, BaseConfig
 from src.volforecast.features.builders import FeatureBuilder
+from src.volforecast.evaluation.metrics import qlike_loss, rmse as rmse_loss, mae as mae_loss
 
 
 @dataclass
 class XGBoostConfig(BaseConfig):
-    n_estimators: int = 500
-    learning_rate: float = 0.05
-    max_depth: int = 4
-    subsample: float = 0.8
-    colsample_bytree: float = 0.8
+    n_estimators_grid: tuple[int, ...] = (100, 200, 500)
+    max_depth_grid: tuple[int, ...] = (2, 3, 4)
+    learning_rate_grid: tuple[float, ...] = tuple(np.linspace(0.01, 0.1, 5))
+    subsample_grid: tuple[float, ...] = (0.8,)
+    colsample_bytree_grid: tuple[float, ...] = (0.8,)
     use_log_target: bool = True
+    cv_splits: int = 5  # Number of time series splits
+    n_iter: int = 20  # Number of randomized search iterations
+    scoring: str = (
+        "qlike"  # Scoring metric for Cross validation: choose between qlike, rmse and mae
+    )
     random_state: int = 42
 
 
@@ -25,6 +33,8 @@ class XGBoostVolModel(BaseVolModel):
         super().__init__(config)
         self.feature_builder = feature_builder
         self.model: Optional[XGBRegressor] = None
+        self.search_: Optional[RandomizedSearchCV] = None
+        self.best_params_: Dict[str, Any] | None = None
         self.fitted_: bool = False
 
     def _build_X(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -42,17 +52,82 @@ class XGBoostVolModel(BaseVolModel):
         valid = X.notna().all(axis=1) & y.notna()
         X, y = X[valid], y[valid]
 
-        model = XGBRegressor(
-            n_estimators=self.config.n_estimators,
-            learning_rate=self.config.learning_rate,
-            max_depth=self.config.max_depth,
-            subsample=self.config.subsample,
-            colsample_bytree=self.config.colsample_bytree,
+        base_model = XGBRegressor(
             random_state=self.config.random_state,
+            objective="reg:squarederror",
+            n_jobs=-1,
+            tree_method="hist",
         )
 
-        model.fit(X, y)
-        self.model = model  # in 2 steps to prevent pylance issues
+        eps = self.config.eps
+        use_log = self.config.use_log_target
+        metric_name = self.config.scoring
+
+        def _metric_for_cv(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+            # y_true, y_pred are arrays on the SAME scale as y in _build_y
+            if use_log:
+                # our y is log(variance + eps) → go back to variance
+                y_true_var = np.exp(y_true) - eps
+                y_pred_var = np.exp(y_pred) - eps
+            else:
+                y_true_var = y_true
+                y_pred_var = y_pred
+
+            if metric_name == "qlike":
+                val = qlike_loss(y_true_var, y_pred_var)
+            elif metric_name == "rmse":
+                val = rmse_loss(y_true_var, y_pred_var)
+            elif metric_name == "mae":
+                val = mae_loss(y_true_var, y_pred_var)
+            else:
+                # fallback: RMSE if someone passes something weird
+                val = rmse_loss(y_true_var, y_pred_var)
+
+            # sklearn maximises the score → return negative loss/metric
+            return -float(val)
+
+        scorer = make_scorer(_metric_for_cv, greater_is_better=True)
+
+        tscv = TimeSeriesSplit(n_splits=self.config.cv_splits)  # Time-series–aware cross-validation
+
+        param_distributions: Dict[str, Any] = {
+            "n_estimators": self.config.n_estimators_grid,
+            "max_depth": self.config.max_depth_grid,
+            "learning_rate": self.config.learning_rate_grid,
+            "subsample": self.config.subsample_grid,
+            "colsample_bytree": self.config.colsample_bytree_grid,
+        }
+
+        if self.best_params_ is None:  # We do only one cross validation to reduce time of training
+            search = RandomizedSearchCV(
+                estimator=base_model,
+                param_distributions=param_distributions,
+                n_iter=self.config.n_iter,
+                cv=tscv,
+                scoring=scorer,
+                random_state=self.config.random_state,
+                n_jobs=-1,
+                verbose=0,
+            )
+
+            search.fit(X, y)
+            self.search_ = search
+            self.best_params_ = search.best_params_
+            self.model = cast(XGBRegressor, search.best_estimator_)
+
+        else:
+            best_params = dict(self.best_params_)
+            best_params.update(
+                {
+                    "objective": "reg:squarederror",
+                    "random_state": self.config.random_state,
+                    "n_jobs": -1,
+                    "tree_method": "hist",
+                }
+            )
+            self.model = XGBRegressor(**best_params)
+            self.model.fit(X, y)
+
         self.fitted_ = True
         return self
 
@@ -70,36 +145,52 @@ class XGBoostVolModel(BaseVolModel):
         return yhat.reindex(df.index).clip(lower=0.0).rename("y_pred")
 
     def summary(self) -> Dict[str, Any]:
-        if not self.model:
+        if self.model is None:
             return {}
-        return {
-            "n_features": self.model.n_features_in_,
+
+        info: Dict[str, Any] = {
+            "n_features": getattr(self.model, "n_features_in_", None),
             "best_params": self.model.get_params(),
-            "feature_importances": dict(
-                zip(self.model.feature_names_in_, self.model.feature_importances_.tolist())
-            ),
+            "feature_importances": None,
         }
+
+        # Feature names + importances if available
+        if hasattr(self.model, "feature_names_in_") and hasattr(self.model, "feature_importances_"):
+            info["feature_importances"] = dict(
+                zip(
+                    self.model.feature_names_in_,
+                    self.model.feature_importances_.tolist(),
+                )
+            )
+
+        # Extra info from randomized search
+        if self.search_ is not None:
+            info["cv_best_score"] = getattr(self.search_, "best_score_", None)
+            info["cv_best_params"] = getattr(self.search_, "best_params_", None)
+
+        return info
 
 
 if __name__ == "__main__":
     import sys
 
     print(sys.executable)
-    print("Running basic self-test for ElasticNetVolModel...")
+    print("Running basic self-test for XGBoostVolModel with randomized CV...")
 
     # 1. Create small dummy dataset
     df = pd.DataFrame(
         {
-            "date": pd.date_range("2020-01-01", periods=10, freq="D"),
-            "log_return_AAPL": [0.01, -0.02, 0.015, 0.005, -0.01, 0.02, 0.0, 0.01, -0.005, 0.002],
-            "vix": [20, 21, 19, 18, 22, 21, 20, 19, 20, 22],
+            "date": pd.date_range("2020-01-01", periods=80, freq="D"),
+            "log_return_AAPL": np.random.normal(0, 0.02, size=80),
+            "vix": np.random.uniform(15, 25, size=80),
         }
     ).set_index("date")
 
     # 2. Build config and feature builder
     base_cfg = BaseConfig(date_col="date", return_col="log_return_AAPL")
     xgboost_cfg = XGBoostConfig(**base_cfg.__dict__)
-    builder = FeatureBuilder(lags_returns=(1, 2))
+    builder = FeatureBuilder(lags_returns=(1, 2), lags_vix=(1, 2))
+
     model = XGBoostVolModel(xgboost_cfg, builder)
 
     # 3. Fit & predict
@@ -108,3 +199,6 @@ if __name__ == "__main__":
 
     print("Predictions:")
     print(y_pred.head())
+
+    print("\nSummary:")
+    print(model.summary())

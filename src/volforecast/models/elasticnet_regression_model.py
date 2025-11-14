@@ -5,6 +5,7 @@ import pandas as pd
 from sklearn.linear_model import ElasticNetCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
+from sklearn.model_selection import TimeSeriesSplit
 
 from src.volforecast.models.base import BaseVolModel, BaseConfig
 from src.volforecast.features.builders import FeatureBuilder
@@ -43,6 +44,9 @@ class ElasticNetVolModel(BaseVolModel):
         y = self._build_y(df)
         valid = X.notna().all(axis=1) & y.notna()
         X, y = X[valid], y[valid]
+        tscv = TimeSeriesSplit(
+            n_splits=self.config.cv_splits
+        )  # to avoid random shuffling in the window we're watching
 
         steps: List[Tuple[str, Any]] = []
         if self.config.scale_features:
@@ -53,7 +57,7 @@ class ElasticNetVolModel(BaseVolModel):
                 ElasticNetCV(
                     alphas=self.config.alphas,
                     l1_ratio=self.config.l1_ratio,
-                    cv=self.config.cv_splits,
+                    cv=tscv,
                     max_iter=10000,
                     n_jobs=None,
                     random_state=42,
