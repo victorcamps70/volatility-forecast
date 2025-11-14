@@ -167,7 +167,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 if verbose:
                     print(f"Epoch {epoch}: train={avg_train_loss:.6f}")
 
-    def fit(self, df: pd.DataFrame) -> "DeepEconoNet":
+    def fit(self, df: pd.DataFrame, scale_mu:float = 0, scale_sigma:float = 1) -> "DeepEconoNet":
         """
         Fit the model on a DataFrame following BaseVolModel API.
         
@@ -178,10 +178,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             self (for chaining)
         """
         # Extract log returns as input features
-        log_returns = df[self.config.return_col].values.astype(np.float32)
+        log_returns = (df[self.config.return_col].values.astype(np.float32) - scale_mu) / scale_sigma
         
         # Extract target (realized volatility) using build_target()
-        target_series = self.build_target(df)
+        target_series = (self.build_target(df) - scale_mu) / scale_sigma
         target = target_series.values.astype(np.float32)
         
         # Handle NaNs
@@ -190,13 +190,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             raise ValueError("All target values are NaN")
         target = np.nan_to_num(target, nan=float(np.nanmean(target[valid_mask])))
         
-        # Create sequences
-        X_seq, y_seq = self._create_sequences(log_returns.reshape(-1, 1), target, self.seq_len)
-        
-        # Split train/val based on config ratio
-        split_idx = int(self.config.train_val_ratio * len(X_seq))
-        X_train, X_val = X_seq[:split_idx], X_seq[split_idx:]
-        y_train, y_val = y_seq[:split_idx], y_seq[split_idx:]
+        X_train, X_val, y_train, y_val = self.train_test_split(log_returns, target)
         
         # Create DataLoaders
         train_dataset = TensorDataset(
@@ -223,7 +217,23 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         self._fit(train_loader, val_loader, epochs=self.config.epochs, verbose=True)
         
         return self
-
+    
+    def train_test_split(self, log_returns: np.ndarray, target: np.ndarray) -> Tuple[np.ndarray, ...]:
+        """
+        Split DataFrame into train and test sets.
+        
+        Args:
+            log_returns: numpy array of log returns
+            target: numpy array of target volatility values
+        """
+        # Create sequences
+        X_seq, y_seq = self._create_sequences(log_returns.reshape(-1, 1), target, self.seq_len)
+        
+        # Split train/val based on config ratio
+        split_idx = int(self.config.train_val_ratio * len(X_seq))
+        X_train, X_val = X_seq[:split_idx], X_seq[split_idx:]
+        y_train, y_val = y_seq[:split_idx], y_seq[split_idx:]
+        return X_train, X_val, y_train, y_val
 
     # ---------- Helper Methods for API Compatibility ----------
     @staticmethod
