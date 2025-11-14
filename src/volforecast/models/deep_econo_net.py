@@ -12,6 +12,11 @@ from src.volforecast.models.base import BaseConfig, BaseVolModel
 @dataclass
 class DeepEconoNetConfig(BaseConfig):
     """Configuration for DeepEconoNet model."""
+    # Target parameters
+    #target_shift: int = 1                # days to shift for target calculation
+    #use_log_target: bool = True
+    scale_features: bool = True
+
     # Sequence and input parameters
     seq_len: int = 20                    # sequence length for LSTM
     
@@ -34,6 +39,7 @@ class DeepEconoNetConfig(BaseConfig):
     learning_rate: float = 1e-3          # optimizer learning rate
     epochs: int = 10                     # number of training epochs
     batch_size: int = 32                 # batch size
+    train_val_ratio: float = 0.8          # train/validation split ratio
     
     # Device parameters
     device: str = "cpu"                  # "cpu" or "cuda"
@@ -187,8 +193,8 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Create sequences
         X_seq, y_seq = self._create_sequences(log_returns.reshape(-1, 1), target, self.seq_len)
         
-        # Split train/val (80/20)
-        split_idx = int(0.8 * len(X_seq))
+        # Split train/val based on config ratio
+        split_idx = int(self.config.train_val_ratio * len(X_seq))
         X_train, X_val = X_seq[:split_idx], X_seq[split_idx:]
         y_train, y_val = y_seq[:split_idx], y_seq[split_idx:]
         
