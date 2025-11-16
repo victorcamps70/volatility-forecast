@@ -106,7 +106,7 @@ class XGBoostVolModel(BaseVolModel):
                 cv=tscv,
                 scoring=scorer,
                 random_state=self.config.random_state,
-                n_jobs=-1,
+                n_jobs=1,
                 verbose=0,
             )
 
@@ -121,7 +121,7 @@ class XGBoostVolModel(BaseVolModel):
                 {
                     "objective": "reg:squarederror",
                     "random_state": self.config.random_state,
-                    "n_jobs": -1,
+                    "n_jobs": 1,
                     "tree_method": "hist",
                 }
             )

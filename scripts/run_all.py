@@ -1,4 +1,5 @@
 import pandas as pd
+from pathlib import Path
 from src.volforecast.models.base import BaseConfig
 from src.volforecast.models.elasticnet_regression_model import ElasticNetVolModel, ElasticNetConfig
 from src.volforecast.models.garch_model import GARCHVolModel, GARCHConfig
@@ -9,12 +10,12 @@ from src.volforecast.visualization.plot import plot_and_save_volatility_forecast
 
 
 TICKERS = [
-    "AAPL",
-    "AXP",
-    "AMZN",
-    "AVGO",
-    "CAT",
-    "CSCO",
+    # "AAPL",
+    # "AXP",
+    # "AMZN",
+    # "AVGO",
+    # "CAT",
+    # "CSCO",
     "KO",
     "GOOGL",
     "GS",
@@ -28,6 +29,43 @@ TICKERS = [
     "TSLA",
     "UBER",
 ]  # 15 biggest american capitalisations
+
+METRICS_CSV = Path("reports") / "metrics_summary.csv"
+LAST_YEAR_DAYS = 250
+
+
+def append_metrics_to_csv(df: pd.DataFrame, csv_path: Path) -> None:
+    """
+    Append metrics for one ticker to a global CSV.
+
+    df must have columns: ticker, model, RMSE, MAE, QLIKE, n
+    """
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not csv_path.exists()
+    df.to_csv(csv_path, mode="a", header=write_header, index=False)
+
+
+def keep_last_year_in_results(model_results: dict, n_days: int = LAST_YEAR_DAYS) -> dict:
+    """
+    Return a copy of model_results where y_true and y_pred
+    are restricted to the last n_days (based on y_true index).
+    """
+    # Copy to avoid modifying the original results dict in place
+    subset = model_results.copy()
+
+    y_true = model_results["y_true"]
+    y_pred = model_results["y_pred"]
+
+    # Take the last n_days of y_true
+    y_true_last = y_true.iloc[-n_days:]
+
+    # Align y_pred on the same dates
+    y_pred_last = y_pred.loc[y_true_last.index]
+
+    subset["y_true"] = y_true_last
+    subset["y_pred"] = y_pred_last
+
+    return subset
 
 
 def run_for_ticker(ticker: str) -> pd.DataFrame:
@@ -136,7 +174,7 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
     # -----------Run backtests and display---------------------------------
     Results = {}
     for name, model in models.items():
-        print(f"Running {name} backtest ...")
+        print(f"Running {name} backtest for {ticker} ...")
         if name == "GARCH":
             model_results = rolling_backtest(
                 model=model,
@@ -180,8 +218,10 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
 
         Results[model] = model_results["metrics"]
         print(f"{name} done ! QLIKE = {model_results['metrics']['QLIKE']:.3e}")
+        last_year_results = keep_last_year_in_results(model_results)
+
         plot_and_save_volatility_forecast(
-            model_results,
+            last_year_results,
             title=f"{ticker}_{name}_Next-Day_Volatility_Forecast",
             save=True,
             show=False,
@@ -202,31 +242,29 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
 
 
 def main():
-    all_metrics = []
+    all_metrics_list = []
 
     for ticker in TICKERS:
-        metrics_df = run_for_ticker(ticker)
-        # keep track of ticker + model
-        metrics_df = metrics_df.copy()
-        metrics_df["ticker"] = ticker
-        metrics_df["model"] = metrics_df.index
-        all_metrics.append(metrics_df.reset_index(drop=True))
+        try:
+            metrics_df = run_for_ticker(ticker)
+        except Exception as e:
+            print(f"\n!!! Error while processing {ticker}: {e}")
+            # you can also import traceback and print traceback.format_exc()
+            continue
 
-    if not all_metrics:
-        print("No tickers specified in TICKERS list.")
+        # Save to global CSV immediately
+        append_metrics_to_csv(metrics_df, METRICS_CSV)
+        all_metrics_list.append(metrics_df)
+
+    if not all_metrics_list:
+        print("No metrics produced (all tickers failed?).")
         return
 
-    # Concatenate all results
-    all_metrics_df = pd.concat(all_metrics, ignore_index=True)
+    all_metrics_df = pd.concat(all_metrics_list, ignore_index=True)
     all_metrics_df = all_metrics_df.set_index(["ticker", "model"])
 
     print("\n==================== Global Summary ====================")
     print(all_metrics_df.to_string())
-
-    # ===== Save results to CSV =====
-    output_path = "reports/metrics_summary.csv"
-    all_metrics_df.to_csv(output_path)
-    print(f"\nSaved metrics summary to {output_path}")
 
 
 if __name__ == "__main__":

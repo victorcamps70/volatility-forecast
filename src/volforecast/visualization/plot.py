@@ -1,3 +1,6 @@
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
@@ -66,8 +69,8 @@ def plot_and_save_volatility_forecast(
     # --- Show or close ---
     if show:
         plt.show()
-    else:
-        plt.close()
+
+    plt.close()
 
     # print metrics for convenience
     print("\nMetrics:")
