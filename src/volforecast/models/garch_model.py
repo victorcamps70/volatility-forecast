@@ -32,6 +32,13 @@ class GARCHVolModel(BaseVolModel[GARCHConfig]):
         self.fitted_: bool = False
 
     def fit(self, df: pd.DataFrame) -> "GARCHVolModel":
+        """
+        Fitting function wrapper for the GARCH model
+        Args:
+            df: dataframe
+        Return:
+            pd.Series: prediction
+        """
         r = df[self.config.return_col].dropna()
         am = arch_model(
             r,
@@ -41,12 +48,20 @@ class GARCHVolModel(BaseVolModel[GARCHConfig]):
             o=self.config.o,
             dist=self.config.dist,
             mean=self.config.mean,
+            rescale=False,
         )
         self.res_ = am.fit(disp="off")
         self.fitted_ = True
         return self
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Predicting function wrapper for the GARCH model
+        Args:
+            df: dataframe
+        Return:
+            pd.Series: prediction
+        """
         assert self.fitted_, "Call fit() first."
         res = cast(ARCHModelResult, self.res_)
         h = res.forecast(horizon=1, start=0, reindex=True).variance.iloc[:, 0]

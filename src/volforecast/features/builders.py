@@ -22,6 +22,13 @@ class FeatureBuilder:
         self.vix_col = vix_col
 
     def build_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Adds the lagging features and the day of the week (hot one encoding) to the features dataframe
+        Args:
+            df: features dataframe
+        Returns:
+            df: features dataframe with the columns listed before added
+        """
         X = pd.DataFrame(index=df.index)
         # example features
         for L in self.lags_returns:

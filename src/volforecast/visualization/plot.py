@@ -70,7 +70,7 @@ def plot_and_save_volatility_forecast(
     if show:
         plt.show()
 
-    plt.close()
+    # plt.close()
 
     # print metrics for convenience
     print("\nMetrics:")

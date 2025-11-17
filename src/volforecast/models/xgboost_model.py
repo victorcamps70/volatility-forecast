@@ -47,6 +47,13 @@ class XGBoostVolModel(BaseVolModel):
         return y.rename("y")
 
     def fit(self, df: pd.DataFrame) -> "XGBoostVolModel":
+        """
+        Fitting function wrapper for the XGBoost model
+        Args:
+            df: dataframe
+        Return:
+            pd.Series: prediction
+        """
         X = self._build_X(df)
         y = self._build_y(df)
         valid = X.notna().all(axis=1) & y.notna()
@@ -64,6 +71,16 @@ class XGBoostVolModel(BaseVolModel):
         metric_name = self.config.scoring
 
         def _metric_for_cv(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+            """
+            Internal function to the fit function,
+            to use a QLIKE-based (or any other metric) random cross validation
+            for the XGBoost model
+            Args:
+                y_true: true target
+                y_pred: predicted target
+            Returns:
+                scorer
+            """
             # y_true, y_pred are arrays on the SAME scale as y in _build_y
             if use_log:
                 # our y is log(variance + eps) → go back to variance
@@ -132,6 +149,13 @@ class XGBoostVolModel(BaseVolModel):
         return self
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Predicting function wrapper for the XGBoost model
+        Args:
+            df: dataframe
+        Return:
+            pd.Series: prediction
+        """
         assert self.fitted_, "Call fit() first."
         assert self.model is not None, "Call fit() first"
         X = self._build_X(df)

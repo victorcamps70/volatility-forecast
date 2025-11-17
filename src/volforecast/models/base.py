@@ -8,7 +8,7 @@ from src.volforecast.evaluation.metrics import rmse as rmse_loss, mae as mae_los
 @dataclass
 class BaseConfig:
     date_col: str = "date"
-    return_col: str = "log_return_AAPL"  # base input for targets
+    return_col: str = "log_return"  # base input for targets
     target_shift: int = -1  # 1-step ahead (align realized at t with info at t-1)
     eps: float = 1e-8  # for log transforms
 

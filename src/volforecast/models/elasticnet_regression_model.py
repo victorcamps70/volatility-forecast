@@ -40,6 +40,13 @@ class ElasticNetVolModel(BaseVolModel):
 
     # --- Required interface
     def fit(self, df: pd.DataFrame) -> "ElasticNetVolModel":
+        """
+        Fitting function wrapper for the Linear regression with Elasticnet cross validation
+        Args:
+            df: dataframe
+        Return:
+            ElasticNetVolModel
+        """
         X = self._build_X(df)
         y = self._build_y(df)
         valid = X.notna().all(axis=1) & y.notna()
@@ -74,6 +81,13 @@ class ElasticNetVolModel(BaseVolModel):
         return self
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Predicting function wrapper for the Linear regression with Elasticnet cross validation
+        Args:
+            df: dataframe
+        Return:
+            pd.Series: prediction
+        """
         assert self.fitted_, "Call fit() first."
         assert self.pipeline is not None, "Call fit() first"
         X = self._build_X(df)

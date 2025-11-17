@@ -158,19 +158,6 @@ See the [`docs/`](docs/) folder for:
 
 # TODO:
 
-- Comment the results of the GARCH Model
-- Comment the results of the ENet CV Model
 - Code the LSTM Model
 - Test the LSTM Model
-- Comment results of the LSTM Model
-- Comment results of the XGBOOST Model
-- Comment the choices made on the Enet Model ? what did i meant here
-- Import the results into reports --> not done yet
 - Import the data loader and test it
-- Finetune the models to have better results --> add CV to the XGBoost model
-- Add stress and time tests to better the code
-- See what's the issue with elasticnet regression (the plot looks odd)
-- Add docstrings to every function
-- Make a powerpoint to present results
-- Adapt the models to forecast to 5 days the vol
-- Check if the docs are ok

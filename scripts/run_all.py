@@ -1,4 +1,5 @@
 import pandas as pd
+import time
 from pathlib import Path
 from src.volforecast.models.base import BaseConfig
 from src.volforecast.models.elasticnet_regression_model import ElasticNetVolModel, ElasticNetConfig
@@ -16,18 +17,18 @@ TICKERS = [
     # "AVGO",
     # "CAT",
     # "CSCO",
-    "KO",
-    "GOOGL",
-    "GS",
-    "JPM",
-    "MA",
-    "META",
-    "MSFT",
-    "NFLX",
-    "NVDA",
-    "QCOM",
-    "TSLA",
-    "UBER",
+    # "KO",
+    # "GOOGL",
+    # "GS",
+    # "JPM",
+    # "MA",
+    # "META",
+    # "MSFT",
+    # "NFLX",
+    # "NVDA",
+    # "QCOM",
+    # "TSLA",
+    # "UBER",
 ]  # 15 biggest american capitalisations
 
 METRICS_CSV = Path("reports") / "metrics_summary.csv"
@@ -39,6 +40,11 @@ def append_metrics_to_csv(df: pd.DataFrame, csv_path: Path) -> None:
     Append metrics for one ticker to a global CSV.
 
     df must have columns: ticker, model, RMSE, MAE, QLIKE, n
+    Args:
+        df: dataframe (dataset)
+        csv_path: Path to the data
+    Returns:
+        None
     """
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not csv_path.exists()
@@ -49,6 +55,11 @@ def keep_last_year_in_results(model_results: dict, n_days: int = LAST_YEAR_DAYS)
     """
     Return a copy of model_results where y_true and y_pred
     are restricted to the last n_days (based on y_true index).
+    Args:
+        model_results: dict with the metrics, the target predicted and the real from target
+        n_days: window of data we want to show
+    Returns:
+        copy of the model_results restricted to the last n_days
     """
     # Copy to avoid modifying the original results dict in place
     subset = model_results.copy()
@@ -69,6 +80,13 @@ def keep_last_year_in_results(model_results: dict, n_days: int = LAST_YEAR_DAYS)
 
 
 def run_for_ticker(ticker: str) -> pd.DataFrame:
+    """
+    Function to run the training, the test and the plot of a ticker.
+    Args:
+        ticker: name of the ticker
+    Returns:
+        Metrics of the 4 models on the ticker
+    """
     # ----------Parameters--------------------------
     # Data choose
     csv_path = f"data/{ticker}_dataset.csv"
@@ -81,14 +99,14 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
         50  # LR needs not much points to work well -> if too many points, just a mean
     )
     min_history_ENET_2 = 100
-    fixed_window_ENET_2 = 200  # LR to have the best measures (but curve not there)
+    fixed_window_ENET_2 = 200  # LR to have the best measures (but plot not there)
     min_history_XGBOOST = 50
     fixed_window_XGBOOST = 100
 
     # Shared Config
     date_col = "date"
     return_col = "log_return"
-    target_shift = -1
+    target_shift = -5
     eps = 1e-8
 
     # Feature builder
@@ -175,6 +193,9 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
     Results = {}
     for name, model in models.items():
         print(f"Running {name} backtest for {ticker} ...")
+
+        start_time = time.perf_counter()
+
         if name == "GARCH":
             model_results = rolling_backtest(
                 model=model,
@@ -216,10 +237,17 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
                 fixed_window=fixed_window_XGBOOST,
             )
 
-        Results[model] = model_results["metrics"]
-        print(f"{name} done ! QLIKE = {model_results['metrics']['QLIKE']:.3e}")
-        last_year_results = keep_last_year_in_results(model_results)
+        elapsed_sec = time.perf_counter() - start_time
+        metrics = model_results["metrics"].copy()
+        metrics["runtime_sec"] = elapsed_sec
 
+        Results[name] = metrics
+        print(
+            f"{name} done ! QLIKE = {model_results['metrics']['QLIKE']:.3e} | "
+            f"time = {elapsed_sec:.1f} s ({elapsed_sec/60:.1f} min)"
+        )
+
+        last_year_results = keep_last_year_in_results(model_results)
         plot_and_save_volatility_forecast(
             last_year_results,
             title=f"{ticker}_{name}_Next-Day_Volatility_Forecast",
@@ -229,16 +257,21 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
         )
 
     # ---------- Metrics table (RMSE/MAE in scientific notation) ----------
-    # ---------- Metrics table (RMSE/MAE in scientific notation) ----------
     metrics_df = pd.DataFrame(Results).T  # index = model name
-    metrics_df["RMSE"] = metrics_df["RMSE"].map(lambda x: f"{x:.2e}")
-    metrics_df["MAE"] = metrics_df["MAE"].map(lambda x: f"{x:.2e}")
-    metrics_df = metrics_df[["RMSE", "MAE", "QLIKE", "n"]]
+    metrics_df = metrics_df[["RMSE", "MAE", "QLIKE", "n", "runtime_sec"]]
+
+    metrics_df["ticker"] = ticker
+    metrics_df["model"] = metrics_df.index
+
+    display_df = metrics_df.copy()
+    display_df["RMSE"] = metrics_df["RMSE"].map(lambda x: f"{x:.2e}")
+    display_df["MAE"] = metrics_df["MAE"].map(lambda x: f"{x:.2e}")
+    display_df["runtime_min"] = display_df["runtime_sec"] / 60
 
     print(f"\nModel Performance Comparison for {ticker}")
-    print(metrics_df.to_string(index=True))
+    print(display_df.set_index("model")[["RMSE", "MAE", "QLIKE", "n", "runtime_min"]].to_string())
 
-    return metrics_df
+    return metrics_df.reset_index(drop=True)
 
 
 def main():

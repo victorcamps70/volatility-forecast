@@ -20,6 +20,16 @@ def rolling_backtest(
       - fit on df.loc[:current_end] (or last N rows if fixed_window)
       - predict exactly at 'next_start' using *context* up to next_start
       - advance by 'step'
+    Args:
+        model: choose between GARCH and a ML model
+        df: dataset
+        train_start: train start
+        train_end: train end
+        step: step of incrementation of the rolling window (1day, 1 business day, 5 days...)
+        min_history: minimum of history needed to run the model with the lags
+        fixed_window: number of days used in the training rolling window
+    Returns:
+        Dict: Predicted target, real target and metrics (RMSE, MAE, QLIKE)
     """
     y_pred_list: list[pd.Series] = []
     y_true_list: list[pd.Series] = []
