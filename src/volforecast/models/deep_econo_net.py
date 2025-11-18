@@ -116,7 +116,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
 
     # ---------- Private Training Loop (with DataLoaders) ----------
-    def _fit(
+    def _fit_ticker(
         self,
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
@@ -167,7 +167,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 if verbose:
                     print(f"Epoch {epoch}: train={avg_train_loss:.6f}")
 
-    def fit(self, df: pd.DataFrame, scale_mu:float = 0, scale_sigma:float = 1) -> "DeepEconoNet":
+    def fit_ticker(self, df: pd.DataFrame, scale_mu:float = 0, scale_sigma:float = 1) -> "DeepEconoNet":
         """
         Fit the model on a DataFrame following BaseVolModel API.
         
@@ -214,7 +214,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         )
         
         # Call internal training loop
-        self._fit(train_loader, val_loader, epochs=self.config.epochs, verbose=True)
+        self._fit_ticker(train_loader, val_loader, epochs=self.config.epochs, verbose=True)
         
         return self
     

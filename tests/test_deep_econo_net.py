@@ -17,7 +17,7 @@ def test_deep_econo_net_with_features():
     print("=" * 80)
     
     # 1. Load data
-    data_path = os.path.join(os.path.dirname(__file__), "..", "data", "AAPL_dataset.csv")
+    data_path = os.path.join(os.path.dirname(__file__), "..", "data/stock_info", "ADSK_dataset.csv")
     df = pd.read_csv(data_path)
     
     print(f"\n1. Loaded data: {len(df)} rows")
@@ -37,7 +37,7 @@ def test_deep_econo_net_with_features():
         learning_rate=1e-3,
         batch_size=batch_size,
         epochs=epochs,
-        return_col="log_return"  # Use correct column name from AAPL data
+        return_col="log_return"  # Use correct column name from ADSK data
     )
     model = DeepEconoNet(config=config)
     print(f"   Device: {model.device}")
@@ -45,7 +45,7 @@ def test_deep_econo_net_with_features():
     
     # 3. Fit model using BaseVolModel API (takes DataFrame)
     print(f"\n3. Training model for {epochs} epochs using new fit(df) API...")
-    model.fit(df)
+    model.fit_ticker(df)
     
     print("\n" + "=" * 80)
     print("✅ Test completed successfully!")
