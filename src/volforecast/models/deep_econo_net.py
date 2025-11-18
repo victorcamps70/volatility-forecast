@@ -7,6 +7,75 @@ from dataclasses import dataclass
 from typing import Optional, Any, Dict, Tuple
 from torch.utils.data import DataLoader, TensorDataset
 from src.volforecast.models.base import BaseConfig, BaseVolModel
+from functools import wraps
+
+
+def track_and_plot_losses(func):
+    """
+    Decorator that tracks training and validation losses and optionally plots them.
+    Plots only if plot=True is passed (default: False).
+    """
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        verbose = kwargs.get('verbose', True)
+        plot = kwargs.get('plot', False)  # ← New parameter, default False
+        
+        # Store original function to capture losses
+        train_losses = []
+        val_losses = []
+        
+        # Monkey-patch print to capture epoch outputs
+        original_print = print
+        
+        def tracking_print(*args_p, **kwargs_p):
+            msg = ' '.join(str(a) for a in args_p)
+            if verbose and 'Epoch' in msg and 'train=' in msg:
+                # Parse: "Epoch X: train=Y.XXXXXX, val=Z.XXXXXX"
+                try:
+                    parts = msg.split(',')
+                    train_loss = float(parts[0].split('=')[1])
+                    val_loss = float(parts[1].split('=')[1]) if 'val=' in msg else None
+                    train_losses.append(train_loss)
+                    if val_loss is not None:
+                        val_losses.append(val_loss)
+                except:
+                    pass
+            original_print(*args_p, **kwargs_p)
+        
+        # Temporarily replace print
+        import builtins
+        builtins.print = tracking_print
+        
+        try:
+            result = func(self, *args, **kwargs)
+        finally:
+            # Restore original print
+            builtins.print = original_print
+        
+        # Plot losses only if plot=True and we have data
+        if plot and (train_losses or val_losses):
+            try:
+                import matplotlib.pyplot as plt
+                fig, ax = plt.subplots(figsize=(10, 5))
+                epochs_range = range(1, len(train_losses) + 1)
+                
+                ax.plot(epochs_range, train_losses, 'b-o', label='Training Loss', linewidth=2, markersize=5)
+                if val_losses:
+                    ax.plot(epochs_range, val_losses, 'r-s', label='Validation Loss', linewidth=2, markersize=5)
+                
+                ax.set_xlabel('Epoch', fontsize=12)
+                ax.set_ylabel('Loss (MSE)', fontsize=12)
+                ax.set_title('Training and Validation Loss', fontsize=13, fontweight='bold')
+                ax.legend(fontsize=11)
+                ax.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.show()
+            except Exception as e:
+                print(f"Could not plot losses: {e}")
+        
+        return result
+    
+    return wrapper
 
 
 @dataclass
@@ -116,12 +185,14 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
 
     # ---------- Private Training Loop (with DataLoaders) ----------
+    @track_and_plot_losses
     def _fit_ticker(
         self,
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         epochs: int = 10,
         verbose: bool = True,
+        plot: bool = False,
     ) -> None:
         """
         Internal training loop with DataLoaders.
@@ -305,4 +376,144 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 "batch_size": self.config.batch_size,
             }
         }
+
+    def fit(self, df_train: pd.DataFrame, df_val: Optional[pd.DataFrame] = None, 
+            feature_col: str = "Log_Return", target_col: str = "RealVol_5d", 
+            verbose: bool = True, plot: bool = False) -> "DeepEconoNet":
+        """
+        Train the model on a large multi-ticker training DataFrame.
+        
+        The input DataFrame should contain pre-normalized data (already standardized
+        per ticker) with rows for multiple tickers combined. This method creates
+        sequences and trains the network.
+        
+        Args:
+            df_train: Training DataFrame with feature_col and target_col.
+                     Should contain normalized data across all tickers.
+            df_val: Optional validation DataFrame. If None, a split is made from df_train.
+            feature_col: Column name for input features (default: "Log_Return")
+            target_col: Column name for target values (default: "RealVol_5d")
+            verbose: Whether to print training progress
+        
+        Returns:
+            self (for method chaining)
+        """
+        # Extract features and targets
+        if feature_col not in df_train.columns:
+            raise KeyError(f"Feature column '{feature_col}' not found in training DataFrame")
+        if target_col not in df_train.columns:
+            raise KeyError(f"Target column '{target_col}' not found in training DataFrame")
+        
+        X_train = df_train[feature_col].values.astype(np.float32).reshape(-1, 1)
+        y_train = df_train[target_col].values.astype(np.float32)
+        
+        # Create sequences
+        X_train_seq, y_train_seq = self._create_sequences(X_train, y_train, self.seq_len)
+        
+        # Handle validation set
+        if df_val is None:
+            # Split train data
+            split_idx = int(self.config.train_val_ratio * len(X_train_seq))
+            X_train_split = X_train_seq[:split_idx]
+            y_train_split = y_train_seq[:split_idx]
+            X_val = X_train_seq[split_idx:]
+            y_val = y_train_seq[split_idx:]
+        else:
+            X_train_split = X_train_seq
+            y_train_split = y_train_seq
+            X_val = df_val[feature_col].values.astype(np.float32).reshape(-1, 1)
+            y_val = df_val[target_col].values.astype(np.float32)
+            X_val, y_val = self._create_sequences(X_val, y_val, self.seq_len)
+        
+        # Create DataLoaders
+        train_dataset = TensorDataset(
+            torch.FloatTensor(X_train_split),
+            torch.FloatTensor(y_train_split.reshape(-1, 1))
+        )
+        val_dataset = TensorDataset(
+            torch.FloatTensor(X_val),
+            torch.FloatTensor(y_val.reshape(-1, 1))
+        )
+        
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=False
+        )
+        
+        # Train
+        self._fit_ticker(train_loader, val_loader, epochs=self.config.epochs, verbose=verbose, plot=plot)
+        
+        return self
+
+    def train_pipeline(
+            self,
+            data_dir: str,
+            pattern: str = "*_dataset.csv",
+            feature_col: str = "Log_Return",
+            target_col: str = "RealVol_5d",
+            verbose: bool = True,
+            plot: bool = False
+        ) -> "DeepEconoNet":
+        """
+        Complete training pipeline: load data, normalize, and train the model.
+        
+        This method orchestrates the full workflow:
+        1. Load all datasets matching the pattern from data_dir
+        2. Normalize the data per ticker using the first normalization_fraction
+        3. Call fit() to train the model on the normalized data
+        
+        Args:
+            data_dir: Path to directory containing CSV files
+            pattern: Glob pattern to match CSV files (default: "*_dataset.csv")
+            normalization_fraction: Fraction of data per ticker to use for computing normalization stats
+                                   (default: 0.8, meaning 80% for stats, 20% for validation)
+            feature_col: Column name for input features (default: "Log_Return")
+            target_col: Column name for target values (default: "RealVol_5d")
+            verbose: Whether to print training progress
+        
+        Returns:
+            self (the trained model)
+        """
+        from src.volforecast.data.dataset_loader import DatasetLoader
+        
+        # Step 1: Load all datasets
+        if verbose:
+            print(f"Loading datasets from {data_dir} matching pattern '{pattern}'...")
+        loader = DatasetLoader()
+        df_all = loader.load_all_datasets(data_dir, pattern=pattern)
+        if verbose:
+            print(f"Loaded {len(df_all)} rows from {df_all['ticker'].nunique()} tickers")
+        
+        # Step 2: Normalize per ticker
+        if verbose:
+            print(f"Normalizing data using first {self.config.train_val_ratio*100:.0f}% of each ticker...")
+        df_train_norm, df_val_norm = loader.normalize_by_ticker(
+            df_all, 
+            fraction=self.config.train_val_ratio
+        )
+        if verbose:
+            print(f"Training set: {len(df_train_norm)} rows, Validation set: {len(df_val_norm)} rows")
+        
+        # Step 3: Train the model
+        if verbose:
+            print("Training model...")
+        self.fit(
+            df_train_norm, 
+            df_val=df_val_norm,
+            feature_col=feature_col,
+            target_col=target_col,
+            verbose=verbose,
+            plot=plot
+        )
+        
+        if verbose:
+            print("Training complete!")
+        
+        return self
 
