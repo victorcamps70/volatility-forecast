@@ -6,6 +6,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional, Any, Dict, Tuple
 from torch.utils.data import DataLoader, TensorDataset
+from numpy.typing import NDArray
 from src.volforecast.models.base import BaseConfig, BaseVolModel
 
 
@@ -118,8 +119,8 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
     # ---------- Private Training Loop (with DataLoaders) ----------
     def _fit_ticker(
         self,
-        train_loader: DataLoader,
-        val_loader: Optional[DataLoader] = None,
+        train_loader: DataLoader[Tuple[torch.Tensor, torch.Tensor]],
+        val_loader: Optional[DataLoader[Tuple[torch.Tensor, torch.Tensor]]] = None,
         epochs: int = 10,
         verbose: bool = True,
     ) -> None:
@@ -167,22 +168,81 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 if verbose:
                     print(f"Epoch {epoch}: train={avg_train_loss:.6f}")
 
+    def _compute_scaling_params(self, log_returns: np.ndarray, target: np.ndarray) -> tuple[tuple[float, float], tuple[float, float]]:
+        """
+        Compute mean and standard deviation separately for log_returns and target.
+        
+        Statistics are computed from the first train_val_ratio percentage of data,
+        avoiding data leakage into validation and test sets.
+        
+        Args:
+            log_returns: Full array of log returns (temporal data)
+            target: Full array of target values (temporal data)
+            
+        Returns:
+            Tuple of ((returns_mean, returns_stdev), (target_mean, target_stdev))
+        """
+        train_idx = int(self.config.train_val_ratio * len(log_returns))
+        
+        # Compute statistics for log_returns from training portion only
+        train_returns = log_returns[:train_idx].flatten()
+        valid_returns = train_returns[~np.isnan(train_returns)]
+        
+        if len(valid_returns) > 0:
+            returns_mu = float(np.mean(valid_returns))
+            returns_sigma = float(np.std(valid_returns))
+        else:
+            returns_mu, returns_sigma = 0.0, 1.0
+        
+        # Avoid division by zero
+        if returns_sigma == 0:
+            returns_sigma = 1.0
+        
+        # Compute statistics for target from training portion only
+        train_target = target[:train_idx]
+        valid_target = train_target[~np.isnan(train_target)]
+        
+        if len(valid_target) > 0:
+            target_mu = float(np.mean(valid_target))
+            target_sigma = float(np.std(valid_target))
+        else:
+            target_mu, target_sigma = 0.0, 1.0
+        
+        # Avoid division by zero
+        if target_sigma == 0:
+            target_sigma = 1.0
+            
+        return (returns_mu, returns_sigma), (target_mu, target_sigma)
+
     def fit_ticker(self, df: pd.DataFrame, scale_mu:float = 0, scale_sigma:float = 1) -> "DeepEconoNet":
         """
         Fit the model on a DataFrame following BaseVolModel API.
         
         Args:
             df: DataFrame with columns for return_col and target (RealVol_5d or computed)
+            scale_mu: Mean for scaling log_returns (computed from training data if default)
+            scale_sigma: Stdev for scaling log_returns (computed from training data if default)
             
         Returns:
             self (for chaining)
         """
-        # Extract log returns as input features
-        log_returns = (df[self.config.return_col].values.astype(np.float32) - scale_mu) / scale_sigma
+        # Extract log returns as raw features (before scaling)
+        log_returns = df[self.config.return_col].values.astype(np.float32)
         
-        # Extract target (realized volatility) using build_target()
-        target_series = (self.build_target(df) - scale_mu) / scale_sigma
+        # Extract target (realized volatility) as raw values
+        target_series = self.build_target(df)
         target = target_series.values.astype(np.float32)
+        
+        # If using default scaling values, compute them separately for log_returns and target
+        if scale_mu == 0 and scale_sigma == 1:
+            (returns_mu, returns_sigma), (target_mu, target_sigma) = self._compute_scaling_params(log_returns, target)
+        else:
+            returns_mu, returns_sigma = scale_mu, scale_sigma
+            target_mu, target_sigma = scale_mu, scale_sigma
+        
+        # Apply separate scaling for log_returns and target
+        log_returns = (log_returns - returns_mu) / returns_sigma
+        target = (target - target_mu) / target_sigma
         
         # Handle NaNs
         valid_mask = ~np.isnan(target)
@@ -305,4 +365,59 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 "batch_size": self.config.batch_size,
             }
         }
+
+    def fit_all_datasets(self, data_dir: str, pattern: str = "*_dataset.csv", verbose: bool = True) -> "DeepEconoNet":
+        """
+        Load all CSV files matching the pattern from data_dir and train on each dataset.
+        
+        This method:
+        1. Finds all files matching the pattern in data_dir (non-recursive)
+        2. Loads each CSV file as a DataFrame
+        3. Calls fit_ticker() on each DataFrame
+        
+        Args:
+            data_dir: Path to directory containing CSV files
+            pattern: Glob pattern to match CSV files (default: "*_dataset.csv")
+            verbose: Whether to print progress messages
+            
+        Returns:
+            self (for method chaining)
+        """
+        import os
+        import glob
+        
+        # Construct search pattern
+        search_pattern = os.path.join(data_dir, pattern)
+        files: list[str] = sorted(glob.glob(search_pattern))
+        
+        if not files:
+            raise FileNotFoundError(f"No files matching '{pattern}' found in: {data_dir}")
+        
+        if verbose:
+            print(f"Found {len(files)} file(s) matching pattern '{pattern}'")
+        
+        for file_path in files:
+            filename = os.path.basename(file_path)
+            try:
+                if verbose:
+                    print(f"\nLoading and training on: {filename}")
+                
+                # Load the CSV file
+                df: pd.DataFrame = pd.read_csv(file_path)  # type: ignore
+                
+                # Train on this dataset
+                self.fit_ticker(df)
+                
+                if verbose:
+                    print(f"  ✓ Completed: {filename}")
+                    
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Error processing {filename}: {e}")
+                continue
+        
+        if verbose:
+            print(f"\nTraining complete on {len(files)} file(s)")
+        
+        return self
 
