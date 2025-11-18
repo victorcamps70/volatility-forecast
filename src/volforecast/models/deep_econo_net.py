@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -398,11 +399,32 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         Returns:
             self (for method chaining)
         """
+        # Make copies to avoid modifying original data
+        df_train = df_train.copy()
+        if df_val is not None:
+            df_val = df_val.copy()
+        
         # Extract features and targets
         if feature_col not in df_train.columns:
             raise KeyError(f"Feature column '{feature_col}' not found in training DataFrame")
+        
+        # Compute target column if it doesn't exist
         if target_col not in df_train.columns:
-            raise KeyError(f"Target column '{target_col}' not found in training DataFrame")
+            if verbose:
+                print(f"Computing target column '{target_col}' from rolling window of '{feature_col}'...")
+            # Compute 5-day rolling volatility (standard deviation)
+            window = 5
+            df_train[target_col] = df_train.groupby('ticker')[feature_col].transform(
+                lambda x: x.rolling(window=window, min_periods=1).std()
+            )
+            if df_val is not None:
+                df_val[target_col] = df_val.groupby('ticker')[feature_col].transform(
+                    lambda x: x.rolling(window=window, min_periods=1).std()
+                )
+            # Fill any NaN values with a small default
+            df_train[target_col] = df_train[target_col].fillna(0.01)
+            if df_val is not None:
+                df_val[target_col] = df_val[target_col].fillna(0.01)
         
         X_train = df_train[feature_col].values.astype(np.float32).reshape(-1, 1)
         y_train = df_train[target_col].values.astype(np.float32)
@@ -481,6 +503,16 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             self (the trained model)
         """
         from src.volforecast.data.dataset_loader import DatasetLoader
+        
+        # Convert relative paths to absolute paths from project root
+        if not os.path.isabs(data_dir):
+            # Find the project root by looking for pyproject.toml
+            current = os.path.abspath(os.path.dirname(__file__))
+            while current != os.path.dirname(current):  # while not at filesystem root
+                if os.path.exists(os.path.join(current, 'pyproject.toml')):
+                    data_dir = os.path.join(current, data_dir)
+                    break
+                current = os.path.dirname(current)
         
         # Step 1: Load all datasets
         if verbose:
