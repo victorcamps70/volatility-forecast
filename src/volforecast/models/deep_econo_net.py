@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Any, Dict, Tuple
 from torch.utils.data import DataLoader, TensorDataset
 from numpy.typing import NDArray
@@ -17,6 +17,7 @@ class DeepEconoNetConfig(BaseConfig):
     #target_shift: int = 1                # days to shift for target calculation
     #use_log_target: bool = True
     scale_features: bool = True
+    scales: Dict[str, Tuple[Tuple[float, float], Tuple[float, float]]] = field(default_factory=dict)  # {ticker: ((returns_mu, returns_sigma), (target_mu, target_sigma))}
 
     # Sequence and input parameters
     seq_len: int = 20                    # sequence length for LSTM
@@ -40,7 +41,7 @@ class DeepEconoNetConfig(BaseConfig):
     learning_rate: float = 1e-3          # optimizer learning rate
     epochs: int = 10                     # number of training epochs
     batch_size: int = 32                 # batch size
-    train_val_ratio: float = 0.8          # train/validation split ratio
+    train_val_ratio: float = 0.8         # train/validation split ratio
     
     # Device parameters
     device: str = "cpu"                  # "cpu" or "cuda"
@@ -214,14 +215,13 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             
         return (returns_mu, returns_sigma), (target_mu, target_sigma)
 
-    def fit_ticker(self, df: pd.DataFrame, scale_mu:float = 0, scale_sigma:float = 1) -> "DeepEconoNet":
+    def fit_ticker(self, df: pd.DataFrame, ticker: Optional[str] = None) -> "DeepEconoNet":
         """
         Fit the model on a DataFrame following BaseVolModel API.
         
         Args:
             df: DataFrame with columns for return_col and target (RealVol_5d or computed)
-            scale_mu: Mean for scaling log_returns (computed from training data if default)
-            scale_sigma: Stdev for scaling log_returns (computed from training data if default)
+            ticker: Optional ticker name to cache scaling parameters
             
         Returns:
             self (for chaining)
@@ -233,16 +233,20 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         target_series = self.build_target(df)
         target = target_series.values.astype(np.float32)
         
-        # If using default scaling values, compute them separately for log_returns and target
-        if scale_mu == 0 and scale_sigma == 1:
-            (returns_mu, returns_sigma), (target_mu, target_sigma) = self._compute_scaling_params(log_returns, target)
-        else:
-            returns_mu, returns_sigma = scale_mu, scale_sigma
-            target_mu, target_sigma = scale_mu, scale_sigma
+        # Apply scaling only if enabled in config
+        returns_mu, returns_sigma = 0.0, 1.0
+        target_mu, target_sigma = 0.0, 1.0
         
-        # Apply separate scaling for log_returns and target
-        log_returns = (log_returns - returns_mu) / returns_sigma
-        target = (target - target_mu) / target_sigma
+        if self.config.scale_features:
+            (returns_mu, returns_sigma), (target_mu, target_sigma) = self._compute_scaling_params(log_returns, target)
+            
+            # Cache scaling parameters by ticker if provided
+            if ticker is not None:
+                self.config.scales[ticker] = ((returns_mu, returns_sigma), (target_mu, target_sigma))
+            
+            # Apply separate scaling for log_returns and target
+            log_returns = (log_returns - returns_mu) / returns_sigma
+            target = (target - target_mu) / target_sigma
         
         # Handle NaNs
         valid_mask = ~np.isnan(target)
@@ -317,13 +321,22 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             preds = self.forward(X_tensor)
             return preds.cpu().numpy()
 
-    def predict(self, df: pd.DataFrame) -> pd.Series:
+    def predict(self, df: pd.DataFrame, ticker: Optional[str] = None) -> pd.Series:
         """
         Override BaseVolModel.predict to work with sequence data.
         Expected: df has columns for building sequences from log returns.
+        
+        Args:
+            df: DataFrame with log returns column
+            ticker: Optional ticker name to retrieve cached scaling parameters
         """
-        # Extract log returns and create sequences
+        # Extract log returns and apply scaling if available
         log_returns = df[self.config.return_col].values.astype(np.float32).reshape(-1, 1)
+        
+        # Apply scaling if enabled and ticker scales are available
+        if self.config.scale_features and ticker is not None and ticker in self.config.scales:
+            (returns_mu, returns_sigma), _ = self.config.scales[ticker]
+            log_returns = (log_returns - returns_mu) / returns_sigma
         
         # Only predict on valid sequences
         if len(log_returns) < self.seq_len:
@@ -402,11 +415,14 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 if verbose:
                     print(f"\nLoading and training on: {filename}")
                 
+                # Extract ticker name from filename (e.g., "ADSK_dataset.csv" -> "ADSK")
+                ticker = filename.replace("_dataset.csv", "").replace(".csv", "")
+                
                 # Load the CSV file
                 df: pd.DataFrame = pd.read_csv(file_path)  # type: ignore
                 
-                # Train on this dataset
-                self.fit_ticker(df)
+                # Train on this dataset with ticker name for caching scales
+                self.fit_ticker(df, ticker=ticker)
                 
                 if verbose:
                     print(f"  ✓ Completed: {filename}")
