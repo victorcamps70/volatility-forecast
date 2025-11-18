@@ -333,9 +333,12 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Extract log returns and apply scaling if available
         log_returns = df[self.config.return_col].values.astype(np.float32).reshape(-1, 1)
         
+        # Track scaling parameters for denormalization
+        target_mu, target_sigma = 0.0, 1.0
+        
         # Apply scaling if enabled and ticker scales are available
         if self.config.scale_features and ticker is not None and ticker in self.config.scales:
-            (returns_mu, returns_sigma), _ = self.config.scales[ticker]
+            (returns_mu, returns_sigma), (target_mu, target_sigma) = self.config.scales[ticker]
             log_returns = (log_returns - returns_mu) / returns_sigma
         
         # Only predict on valid sequences
@@ -344,6 +347,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         
         X_seq, _ = self._create_sequences(log_returns, np.zeros(len(log_returns)), self.seq_len)
         preds = self.predict_array(X_seq).flatten()
+        
+        # Denormalize predictions if scaling was applied
+        if self.config.scale_features and (target_mu != 0.0 or target_sigma != 1.0):
+            preds = preds * target_sigma + target_mu
         
         # Align predictions with original dataframe index
         # Predictions start at index seq_len
