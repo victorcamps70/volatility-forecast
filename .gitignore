@@ -40,6 +40,10 @@ reports/*
 reports/figures/*
 !reports/figures/.gitkeep
 
+# Model checkpoints & training artifacts
+src/volforecast/training/checkpoints/
+*.pt
+
 # IDE
 .vscode/
 .idea/
