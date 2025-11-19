@@ -1,6 +1,6 @@
 # Volatility Forecasting: GARCH vs ML
 
-V0.1
+V0.3
 
 This repository compares **GARCH** models versus **Machine Learning** methods for **one-step-ahead volatility forecasting** on equity time series.
 
@@ -11,22 +11,33 @@ This repository compares **GARCH** models versus **Machine Learning** methods fo
 ├── configs/
 │   └── default.yaml
 ├── data/                 # Place your CSVs here (kept out of git)
+├── docs/
+│   ├── 01_theory.md
+│   ├── 02_models.md
+│   ├── 03_code_reference.md
 ├── notebooks/
 │   ├── 01_presentation_of_results.ipynb
 ├── reports/
 │   └── figures/
 ├── scripts/
-│   └── run_all.py #To be done
+│   └── run_all.py
 ├── src/
 │   └── volforecast/
 │       ├── data/
-│       │   └── loader.py
+│       │   └── loader.py #To be done
 │       ├── evaluation/
 │       │   ├── metrics.py
 │       │   └── backtest.py
-│       └── models/
-│           ├── garch_model.py
-│           └── elasticnet_regression_model.py
+│       ├── features/
+│       │   ├── builders.py
+│       ├── models/
+│       │   ├── base.py
+│       │   ├── garch_model.py
+│       │   ├── elasticnet_regression_model.py
+│       │   ├── lstm_model.py #to be done
+│       │   └── xgboost_model.py
+│       └── visualization/
+│           └── plot.py
 ├── .gitignore
 ├── pyproject.toml
 └── README.md
@@ -37,7 +48,7 @@ This repository compares **GARCH** models versus **Machine Learning** methods fo
 1. **Install** (preferably in a virtualenv):
 
    ```bash
-   pip install -e .[dev]
+   pip install -e .   #[dev]
    ```
 
 2. **Put your CSVs** in `data/`. Example expected columns:
@@ -53,44 +64,44 @@ This repository compares **GARCH** models versus **Machine Learning** methods fo
 
 4. **Run experiments**:
    ```bash
-   python scripts/run_all.py --csv data/AAPL.csv --ticker AAPL
+   python -m scripts.run_all #(Use absolute imports for consistent behavior across environments.)
    ```
 
 ## Notes
 
-- Each model lives in its own **Python script**, mirroring your style.
+- Each model lives in its own **Python script**, with a common base in `base.py`
 - Data stays in `data/` as CSVs (not committed).
 - Results and charts go to `reports/figures/`.
 
 ## Overview
 
-Financial volatility — the variability of asset returns — plays a central role in risk management, option pricing, and portfolio allocation.  
-This project explores two complementary modeling paradigms:
+Financial volatility — the variability of asset returns — is central in risk management, derivative pricing, and portfolio optimization.
+This project compares statistical and machine learning approaches.
 
-| Model Type           | Example               | Description                                                                            |
-| -------------------- | --------------------- | -------------------------------------------------------------------------------------- |
-| **Econometric**      | GARCH(1,1)            | Captures conditional heteroskedasticity — the idea that volatility clusters over time. |
-| **Machine Learning** | ElasticNet regression | Learns volatility from lagged returns, realized volatility, and rolling statistics.    |
-
-Both models are compared on accuracy metrics such as **RMSE**, **MAE**, and **QLIKE**.
-
----
-
-## ⚙️ Key Components
-
-| File                                                    | Purpose                                                                         |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `src/volforecast/models/garch_model.py`                 | Implements the GARCH(1,1) model using the `arch` package.                       |
-| `src/volforecast/models/elasticnet_regression_model.py` | Implements an ElasticNet volatility regressor with lagged and rolling features. |
-| `src/volforecast/evaluation/metrics.py`                 | Contains RMSE, MAE, and QLIKE loss functions.                                   |
-| `src/volforecast/evaluation/backtest.py`                | Implements a rolling backtest framework.                                        |
-| `src/volforecast/data/loader.py`                        | Loads CSV files and prepares log returns.                                       |
-| `scripts/run_all.py`                                    | Command-line experiment runner comparing models.                                |
-| `notebooks/01_preentation_of_results.ipynb`             | Interactive exploration and visualization of results.                           |
+| Model Type           | Example               | Description                                                                  |
+| -------------------- | --------------------- | ---------------------------------------------------------------------------- |
+| **Econometric**      | GARCH(1,1)            | Captures volatility clustering using conditional variance dynamics.          |
+| **Machine Learning** | ElasticNet Regression | Linear model with L1/L2 regularization; interpretable and robust.            |
+| **Machine Learning** | XGBoost               | Nonlinear gradient-boosted trees learning from lagged features and VIX data. |
 
 ---
 
-## 📊 Evaluation Metrics
+## Key Components
+
+| File                                                    | Purpose                                                           |
+| ------------------------------------------------------- | ----------------------------------------------------------------- |
+| `src/volforecast/models/garch_model.py`                 | Implements GARCH(1,1) using `arch`.                               |
+| `src/volforecast/models/elasticnet_regression_model.py` | ElasticNet regressor with lagged features.                        |
+| `src/volforecast/models/xgboost_model.py`               | Gradient-boosted tree model for nonlinear volatility forecasting. |
+| `src/volforecast/features/builders.py`                  | Creates lag features (returns, VIX, day-of-week dummies).         |
+| `src/volforecast/evaluation/metrics.py`                 | Defines RMSE, MAE, and QLIKE.                                     |
+| `src/volforecast/evaluation/backtest.py`                | Rolling-window backtesting framework.                             |
+| `scripts/run_all.py`                                    | Runs all models sequentially and stores results.                  |
+| `notebooks/01_presentation_of_results.ipynb`            | Visualizes and compares forecasts.                                |
+
+---
+
+## Evaluation Metrics
 
 - **RMSE (Root Mean Squared Error)**: measures average forecast error magnitude.
 - **MAE (Mean Absolute Error)**: measures average absolute deviation.
@@ -98,7 +109,7 @@ Both models are compared on accuracy metrics such as **RMSE**, **MAE**, and **QL
 
 ---
 
-## 🧠 Theoretical Background
+## Theoretical Background
 
 - **GARCH(1,1)** assumes the conditional variance evolves as:
 
@@ -113,9 +124,22 @@ Both models are compared on accuracy metrics such as **RMSE**, **MAE**, and **QL
   $$
   \min_{\beta} \|y - X\beta\|\_2^2 + \alpha[(1 - l_1)\|\beta\|_2^2 + l_1\|\beta\|_1
   $$
+
   controlling both overfitting and feature selection.
 
-The ElasticNet is fed with:
+- **XGBoost Volatility Model**
+
+  Uses lagged returns, lagged VIX, and calendar features (day of week).
+  Supports log-transform of variance for stability.
+  Can be cross-validated via GridSearchCV or TimeSeriesSplit to tune:
+
+  - max_depth
+  - learning_rate
+  - subsample
+  - colsample_bytree
+  - n_estimators
+
+The ElasticNet and XGBoost are fed with:
 
 - lagged returns,
 - lagged realized volatility,
@@ -124,7 +148,7 @@ The ElasticNet is fed with:
 
 ---
 
-## 📚 Detailed Documentation
+## Detailed Documentation
 
 See the [`docs/`](docs/) folder for:
 
@@ -134,21 +158,6 @@ See the [`docs/`](docs/) folder for:
 
 # TODO:
 
-- Test the GARCH Model in the notebook
-- Comment the results of the GARCH Model
-- Comment the results of the ENet CV Model
 - Code the LSTM Model
-- Code the NN Model
 - Test the LSTM Model
-- Test the NN Model
-- Comment results of the LSTM Model
-- Comment results of the NN Model
-- Make sure there's no redundancies between Enet and evaluation, and evaluation files
-- Comment the choices made on the Enet Model
-- Make the .md that are still not there
-- Import the results into reports --> not done yet
 - Import the data loader and test it
-- Update the format of the .py (mettre à niveau mes .py pour qu'ils soient tous pareil)
-- Add a run_all.py to make sure that we can run all the results at once
-- Finetune the models to have better results
-- Add stress and time tests to better the code

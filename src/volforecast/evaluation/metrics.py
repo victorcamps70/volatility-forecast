@@ -19,12 +19,14 @@ def qlike_loss(y_true: np.ndarray, y_pred: np.ndarray, epsilon: float = 1e-12) -
     y_true = np.clip(y_true, epsilon, None)
     y_pred = np.asarray(y_pred, dtype=np.float64)
     y_pred = np.clip(y_pred, epsilon, None)
-    loss = float(np.mean(np.log(y_pred) + (y_true / y_pred)))
+
+    ratio = y_true / y_pred
+    loss = float(np.mean(ratio - np.log(ratio) - 1))
 
     return loss
 
 
-def rmse(y_true:float, y_pred:float) -> float:
+def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Mean squared error
 
     Args:
@@ -37,7 +39,7 @@ def rmse(y_true:float, y_pred:float) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def mae(y_true:float, y_pred:float) -> float:
+def mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Mean absolute error
 
     Args:

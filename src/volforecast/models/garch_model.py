@@ -1,104 +1,111 @@
 from __future__ import annotations
-import numpy as np
 import pandas as pd
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
 from arch import arch_model
-from ..evaluation.metrics import qlike_loss, rmse, mae
+from typing import Literal, Optional, cast
+from arch.univariate.base import ARCHModelResult
 
-# TODO: add docstrings, reconfigure to match other models
+from src.volforecast.models.base import BaseVolModel, BaseConfig
+
+DistName = Literal[
+    "normal", "gaussian", "t", "studentst", "skewstudent", "skewt", "ged", "generalized error"
+]
+
+MeanName = Literal["zero", "constant", "AR", "HAR"]
 
 
 @dataclass
-class GARCHConfig:
-    date: str = "Date"
-    log_return_stock: str = "Log_Return"
+class GARCHConfig(BaseConfig):
     p: int = 1
     q: int = 1
-    o: int = 0  # for GJR
-    dist: str = "normal"  # "t", "skewt", etc.
-    mean: str = "zero"  # "constant" if you want a mean
-    vol: str = "GARCH"  # or "EGARCH", "GARCH", "GJR-GARCH"
-    scale_features: bool = True
+    o: int = 0
+    dist: DistName = "normal"
+    mean: MeanName = "zero"
+    scale_factor: float = 1.0  # to rescale returns if needed
+    rescale_returns: bool = False  # whether to rescale returns by scale_factor
 
 
-class GARCHModel:
+class GARCHVolModel(BaseVolModel[GARCHConfig]):
     def __init__(self, config: GARCHConfig):
-        """Initialize the GARCH model with the given configuration.
+        super().__init__(config)
+        self.res_: Optional[ARCHModelResult] = None
+        self.fitted_: bool = False
 
+    def fit(self, df: pd.DataFrame) -> "GARCHVolModel":
+        """
+        Fitting function wrapper for the GARCH model
         Args:
-            config (GARCHConfig): Configuration parameters for the GARCH model.
+            df: dataframe
+        Return:
+            pd.Series: prediction
         """
-        self.config = config
-        self._fitted: bool = False
-        self.pipeline: Optional[Pipeline] = (
-            None  # Pipeline for preprocessing and modeling (c'est pour éviter d'oublier de transformer les données)
+        r = df[self.config.return_col].dropna()
+        am = arch_model(
+            r,
+            vol="GARCH",
+            p=self.config.p,
+            q=self.config.q,
+            o=self.config.o,
+            dist=self.config.dist,
+            mean=self.config.mean,
+            rescale=False,
         )
-
-    def fit(self, df: pd.DataFrame) -> "GARCHModel":
-        """
-        Fit the GARCH model to the data.
-        Args:
-            df (pd.DataFrame): DataFrame containing the log returns.
-            Returns:GARCHModel: Fitted GARCHModel instance.
-        """
-
-        r = df[self.config.log_return_stock].astype(float).dropna()
-        steps = []
-        if self.config.scale_features:
-            steps.append(("scaler", StandardScaler()))
-        steps.append(
-            (
-                "garch",
-                arch_model(
-                    r,
-                    p=self.config.p,
-                    o=self.config.o,
-                    q=self.config.q,
-                    vol=self.config.vol,
-                    dist=self.config.dist,
-                    mean=self.config.mean,
-                ),
-            )
-        )
-        self.pipeline = Pipeline(steps)
-        self.pipeline.fit(disp="off")
-        self._fitted = True
+        self.res_ = am.fit(disp="off")
+        self.fitted_ = True
         return self
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
-        """Predict variance using the fitted GARCH model.
-
-        Args:
-            df (pd.DataFrame): DataFrame containing the log returns for prediction.
-
-        Raises:
-            ValueError: If the model has not been fitted yet.
-
-        Returns:
-            pd.Series: Predicted variance values aligned with the input DataFrame index.
         """
-        if not self._fitted:
-            raise ValueError("Fit the model first.")
-        horizon = len(df)
-        # one-step-ahead rolling variance forecast aligned to df index
-        fcast = self._fitted_res.forecast(horizon=horizon, reindex=False)
-        var = fcast.variance.iloc[-1].values  # last row are next-step forecasts for horizon steps
-        out = pd.Series(var, index=df.index, name="predictions")
-        # ensure non-negativity
-        return out.clip(lower=0)
+        Predicting function wrapper for the GARCH model
+        Args:
+            df: dataframe
+        Return:
+            pd.Series: prediction
+        """
+        assert self.fitted_, "Call fit() first."
+        res = cast(ARCHModelResult, self.res_)
+        h = res.forecast(horizon=1, start=0, reindex=True).variance.iloc[:, 0]
+        h = h.shift(1)
 
-    def evaluate(self, df: pd.DataFrame) -> Dict[str, Any]:
-        if self._fitted_res is None:
-            raise ValueError("Fit the model first.")
-        # Forecast aligned to df
-        y_hat = self.predict(df)
-        # Proxy "true" variance as squared return
-        y_true = (
-            (df[self.config.log_return_stock].astype(float) ** 2).reindex(y_hat.index).clip(lower=0)
-        )
-        return {
-            "RMSE": rmse(y_true, y_hat),
-            "MAE": mae(y_true, y_hat),
-            "QLIKE": qlike_loss(y_true.values, y_hat.values),
+        if self.config.rescale_returns:
+            h = h * (self.config.scale_factor**2)
+
+        # align to incoming df index, forward-fill if needed
+        yhat = h.reindex(df.index, method="ffill").rename("y_pred")
+        return yhat
+
+
+if __name__ == "__main__":
+    import pandas as pd
+
+    print("Running basic self-test for GARCHVolModel...")
+
+    # 1. Create a small dummy dataset
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2020-01-01", periods=10, freq="D"),
+            "log_return": [0.01, -0.02, 0.015, 0.005, -0.01, 0.02, 0.0, 0.01, -0.005, 0.002],
         }
+    ).set_index("date")
+
+    # 2. Build config and model
+
+    base_cfg = BaseConfig(return_col="log_return", target_shift=-1)
+    garch_cfg = GARCHConfig(**base_cfg.__dict__, p=1, q=1, dist="normal", mean="zero")
+    model = GARCHVolModel(garch_cfg)
+
+    # 3. Fit & predict
+    model.fit(df)
+    y_pred = model.predict(df)
+
+    print("Predictions:")
+    print(y_pred.head())
+
+    # 4. (Optional) quick comparison with realized variance
+    y_true = model.build_target(df)
+    valid = y_true.notna() & y_pred.notna()
+    if valid.any():
+        mae = (y_true[valid] - y_pred[valid]).abs().mean()
+        print(f"\nMean Absolute Error (sanity check): {mae:.6e}")
+
+    print("\n GARCHVolModel self-test finished.")
