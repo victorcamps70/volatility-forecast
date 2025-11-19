@@ -17,8 +17,12 @@ class XGBoostConfig(BaseConfig):
     n_estimators_grid: tuple[int, ...] = (100, 200, 500)
     max_depth_grid: tuple[int, ...] = (2, 3, 4)
     learning_rate_grid: tuple[float, ...] = tuple(np.linspace(0.01, 0.1, 5))
-    subsample_grid: tuple[float, ...] = (0.8,)
-    colsample_bytree_grid: tuple[float, ...] = (0.8,)
+    subsample_grid: tuple[float, ...] = (0.6, 0.8)
+    colsample_bytree_grid: tuple[float, ...] = (0.6, 0.8)
+    min_child_weight_grid: tuple[float, ...] = (5.0, 10.0, 20.0)
+    gamma_grid: tuple[float, ...] = (0.0, 0.1, 0.5)
+    reg_lambda_grid: tuple[float, ...] = (1.0, 5.0, 10.0)  # L2
+    reg_alpha_grid: tuple[float, ...] = (0.0, 0.1, 1.0)
     use_log_target: bool = True
     cv_splits: int = 5  # Number of time series splits
     n_iter: int = 20  # Number of randomized search iterations
@@ -113,6 +117,10 @@ class XGBoostVolModel(BaseVolModel):
             "learning_rate": self.config.learning_rate_grid,
             "subsample": self.config.subsample_grid,
             "colsample_bytree": self.config.colsample_bytree_grid,
+            "min_child_weight": self.config.min_child_weight_grid,
+            "gamma": self.config.gamma_grid,
+            "reg_lambda": self.config.reg_lambda_grid,
+            "reg_alpha": self.config.reg_alpha_grid,
         }
 
         if self.best_params_ is None:  # We do only one cross validation to reduce time of training
@@ -142,6 +150,9 @@ class XGBoostVolModel(BaseVolModel):
                     "tree_method": "hist",
                 }
             )
+
+            if best_params.get("max_depth", 6) > 5:
+                best_params["max_depth"] = 5  # to avoid overfitting
             self.model = XGBRegressor(**best_params)
             self.model.fit(X, y)
 
