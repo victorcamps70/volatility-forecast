@@ -6,7 +6,6 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Any, Dict, Tuple
 from torch.utils.data import DataLoader, TensorDataset
-from numpy.typing import NDArray
 from src.volforecast.models.base import BaseConfig, BaseVolModel
 
 
@@ -74,7 +73,8 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
         # ----- Loss & Optimizer -----
         self.criterion = nn.MSELoss()
-        self.optimizer = optim.Adam(self.parameters(), lr=self.config.learning_rate)
+        # annotate optimizer with the general Optimizer type so .step has the correct signature
+        self.optimizer: optim.Optimizer = optim.Adam(self.parameters(), lr=self.config.learning_rate)
 
         self.seq_len = self.config.seq_len
         self.to(self.device)
@@ -227,11 +227,12 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             self (for chaining)
         """
         # Extract log returns as raw features (before scaling)
-        log_returns = df[self.config.return_col].values.astype(np.float32)
+        # Ensure a 1D numpy array of dtype float32 to avoid ambiguous tuple/object dtypes
+        log_returns = df[self.config.return_col].to_numpy(dtype=np.float32).reshape(-1)
         
         # Extract target (realized volatility) as raw values
         target_series = self.build_target(df)
-        target = target_series.values.astype(np.float32)
+        target = target_series.to_numpy(dtype=np.float32).reshape(-1)
         
         # Apply scaling only if enabled in config
         returns_mu, returns_sigma = 0.0, 1.0
@@ -331,7 +332,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             ticker: Optional ticker name to retrieve cached scaling parameters
         """
         # Extract log returns and apply scaling if available
-        log_returns = df[self.config.return_col].values.astype(np.float32).reshape(-1, 1)
+        log_returns = df[self.config.return_col].to_numpy(dtype=np.float32).reshape(-1, 1)
         
         # Track scaling parameters for denormalization
         target_mu, target_sigma = 0.0, 1.0
