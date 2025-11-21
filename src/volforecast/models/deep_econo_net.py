@@ -28,7 +28,7 @@ class DeepEconoNetConfig(BaseConfig):
     conv_padding: int = 2                # padding for convolution
     
     # LSTM parameters
-    lstm_input_size: int = 16            # must match conv_out_channels
+    lstm_input_size: int = conv_out_channels
     lstm_hidden_size: int = 32           # hidden state size
     lstm_num_layers: int = 1             # number of LSTM layers
     
@@ -68,7 +68,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             num_layers=self.config.lstm_num_layers,
         )
 
-        self.fc1 = nn.Linear(self.config.lstm_hidden_size, self.config.fc1_hidden_size)
+        self.fc1 = nn.Linear(self.config.lstm_hidden_size + 1, self.config.fc1_hidden_size)
         self.fc2 = nn.Linear(self.config.fc1_hidden_size, self.config.fc_output_size)
 
         # ----- Loss & Optimizer -----
@@ -81,7 +81,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
 
     # ---------- Forward Pass ----------
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, vol:torch.Tensor) -> torch.Tensor:
         """
         x: (batch, seq_len, 1)
         Returns: (batch, 1)
@@ -95,21 +95,42 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         x = x.transpose(0, 1)        # (seq_len, batch, 16)
 
         _, (h, _) = self.lstm(x)
-        h = h[-1]  # last layer's hidden state: (batch, 32)
+        h = h[-1]                    # last layer's hidden state: (batch, 32)
 
-        x = torch.relu(self.fc1(h))  # (batch, 16)
+        x = torch.concat([h, vol], dim=1)  # (batch, 33) = 32 hidden + 1 volatility
+        x = self.fc1(x)              # (batch, 16)
+        x = torch.relu(x)            # (batch, 16)
         x = self.fc2(x)              # (batch, 1)
 
         return x
 
 
+    # ---------- Volatility Computation ----------
+    @staticmethod
+    def _compute_current_vol(X_seq: np.ndarray) -> np.ndarray:
+        """
+        Compute current realized volatility for each sequence.
+        
+        Args:
+            X_seq: sequences of log returns (batch, seq_len, 1)
+            
+        Returns:
+            current volatility for each sequence (batch, 1)
+        """
+        # RMS of returns in sequence
+        return np.sqrt(np.mean(X_seq[:, :, 0] ** 2, axis=1, keepdims=True))
+
     # ---------- One Training Step ----------
     def train_step(self, X_batch: torch.Tensor, y_batch: torch.Tensor) -> float:
         X_batch = X_batch.to(self.device)
         y_batch = y_batch.to(self.device)
+        
+        # Compute current volatility from sequences
+        X_np = X_batch.cpu().numpy()
+        vol_batch = torch.FloatTensor(self._compute_current_vol(X_np)).to(self.device)
 
         self.optimizer.zero_grad()
-        preds = self.forward(X_batch)
+        preds = self.forward(X_batch, vol_batch)
         loss = self.criterion(preds, y_batch)
         loss.backward()
         self.optimizer.step()
@@ -155,7 +176,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                     for Xv, yv in val_loader:
                         Xv = Xv.to(self.device)
                         yv = yv.to(self.device)
-                        preds = self.forward(Xv)
+                        # Compute current volatility from sequences
+                        Xv_np = Xv.cpu().numpy()
+                        vol_v = torch.FloatTensor(self._compute_current_vol(Xv_np)).to(self.device)
+                        preds = self.forward(Xv, vol_v)
                         loss_v = self.criterion(preds, yv)
                         val_loss += loss_v.item()
                         vbatches += 1
@@ -319,7 +343,9 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         self.eval()
         with torch.no_grad():
             X_tensor = torch.FloatTensor(X).to(self.device)
-            preds = self.forward(X_tensor)
+            # Compute current volatility from sequences
+            vol_batch = torch.FloatTensor(self._compute_current_vol(X)).to(self.device)
+            preds = self.forward(X_tensor, vol_batch)
             return preds.cpu().numpy()
 
     def predict(self, df: pd.DataFrame, ticker: Optional[str] = None) -> pd.Series:
