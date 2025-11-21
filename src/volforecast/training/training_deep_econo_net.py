@@ -211,13 +211,14 @@ def list_available_checkpoints():
     return checkpoints
 
 
-def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_interval=None):
+def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_interval=None, config=None):
     """Evaluate training on multiple ticker datasets with real-time error monitoring.
     
     Args:
         num_tickers: Number of tickers to train on (default: 10)
         resume_checkpoint: Path to checkpoint to resume training from
         save_interval: DEPRECATED - now saves automatically on interrupt (Ctrl+C)
+        config: Optional DeepEconoNetConfig to override defaults
     """
     
     # Global variables for signal handling
@@ -337,15 +338,14 @@ def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_
     # Create model with configuration (if not resuming)
     if model is None:
         print(f"\n🔧 Model Configuration:")
-        config = DeepEconoNetConfig(
-            seq_len=20,
-            learning_rate=1e-3,
-            batch_size=64,
-            epochs=20,  # More epochs to see convergence
-            return_col="log_return",
-            scale_features=True,
-            train_val_ratio=0.8
-        )
+        if config is None:
+            config = DeepEconoNetConfig(
+                seq_len=20,
+                learning_rate=1e-3,
+                return_col="log_return",
+                scale_features=True,
+                train_val_ratio=0.8
+            )
         
         print(f"   Sequence length: {config.seq_len}")
         print(f"   Learning rate: {config.learning_rate}")
@@ -428,6 +428,7 @@ def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_
     
     # Timing statistics
     print(f"\n⏱️  Performance:")
+    print(f"   Device: {model.device}")
     print(f"   Total training time: {total_time:.2f}s")
     if num_trained > 0:
         print(f"   Average time per ticker: {total_time / num_trained:.2f}s")
@@ -488,6 +489,13 @@ Interrupt Handling:
         action='store_true',
         help='List all available checkpoints and exit'
     )
+    parser.add_argument(
+        '--device',
+        type=str,
+        choices=['cpu', 'cuda'],
+        default='cuda',
+        help='Device to train on (default: cuda)'
+    )
     
     args = parser.parse_args()
     
@@ -497,9 +505,11 @@ Interrupt Handling:
         sys.exit(0)
     
     try:
+        train_config = DeepEconoNetConfig(device=args.device, return_col="log_return")
         success = evaluate_multi_ticker_training(
             num_tickers=args.num_tickers,
-            resume_checkpoint=args.resume_checkpoint
+            resume_checkpoint=args.resume_checkpoint,
+            config=train_config
         )
         sys.exit(0 if success else 1)
     except Exception as e:

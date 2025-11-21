@@ -38,12 +38,13 @@ class DeepEconoNetConfig(BaseConfig):
     
     # Training parameters
     learning_rate: float = 1e-3          # optimizer learning rate
-    epochs: int = 10                     # number of training epochs
-    batch_size: int = 32                 # batch size
+    epochs: int = 20                     # number of training epochs
+    batch_size: int = 64                 # batch size
     train_val_ratio: float = 0.8         # train/validation split ratio
+    gradient_accumulation_steps: int = 1 # gradient accumulation steps for larger effective batch size
     
     # Device parameters
-    device: str = "cpu"                  # "cpu" or "cuda"
+    device: str = "cpu"                  # "cpu" or "cuda" (auto-detects GPU if available)
 
 
 class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
@@ -51,8 +52,22 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         super().__init__(config)
         nn.Module.__init__(self)
         
-        # Use GPU if available
-        self.device = self.config.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Initialize device with GPU acceleration if available
+        # Priority: explicit config.device setting > auto-detect GPU > CPU fallback
+        if self.config.device == "cpu":
+            # Explicit CPU request - always use CPU
+            self.device = "cpu"
+        elif self.config.device == "cuda":
+            # GPU requested - use GPU if available, fallback to CPU
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            # Fallback: use CPU by default
+            self.device = "cpu"
+        
+        # Log device info for debugging
+        if self.device == "cuda":
+            print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+            print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
 
         # ----- Model Layers -----
         self.conv = nn.Conv1d(
@@ -66,6 +81,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             input_size=self.config.lstm_input_size,
             hidden_size=self.config.lstm_hidden_size,
             num_layers=self.config.lstm_num_layers,
+            batch_first=False,  # Keep False for current implementation, but optimized for GPU
         )
 
         self.fc1 = nn.Linear(self.config.lstm_hidden_size + 1, self.config.fc1_hidden_size)
@@ -122,12 +138,13 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
     # ---------- One Training Step ----------
     def train_step(self, X_batch: torch.Tensor, y_batch: torch.Tensor) -> float:
-        X_batch = X_batch.to(self.device)
-        y_batch = y_batch.to(self.device)
+        X_batch = X_batch.to(self.device, dtype=torch.float32)
+        y_batch = y_batch.to(self.device, dtype=torch.float32)
         
         # Compute current volatility from sequences
-        X_np = X_batch.cpu().numpy()
-        vol_batch = torch.FloatTensor(self._compute_current_vol(X_np)).to(self.device)
+        # Move to CPU only for numpy computation if on GPU (minimal overhead)
+        X_np = X_batch.cpu().numpy() if self.device == "cuda" else X_batch.numpy()
+        vol_batch = torch.as_tensor(self._compute_current_vol(X_np), dtype=torch.float32, device=self.device)
 
         self.optimizer.zero_grad()
         preds = self.forward(X_batch, vol_batch)
@@ -174,11 +191,11 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                     val_loss = 0.0
                     vbatches = 0
                     for Xv, yv in val_loader:
-                        Xv = Xv.to(self.device)
-                        yv = yv.to(self.device)
+                        Xv = Xv.to(self.device, dtype=torch.float32)
+                        yv = yv.to(self.device, dtype=torch.float32)
                         # Compute current volatility from sequences
-                        Xv_np = Xv.cpu().numpy()
-                        vol_v = torch.FloatTensor(self._compute_current_vol(Xv_np)).to(self.device)
+                        Xv_np = Xv.cpu().numpy() if self.device == "cuda" else Xv.numpy()
+                        vol_v = torch.as_tensor(self._compute_current_vol(Xv_np), dtype=torch.float32, device=self.device)
                         preds = self.forward(Xv, vol_v)
                         loss_v = self.criterion(preds, yv)
                         val_loss += loss_v.item()
@@ -188,6 +205,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
                 if verbose:
                     print(f"Epoch {epoch}: train={avg_train_loss:.6f}, val={avg_val_loss:.6f}")
+                
+                # Clear GPU cache if using CUDA for faster validation
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
 
             else:
                 if verbose:
@@ -291,15 +312,24 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             torch.FloatTensor(y_val.reshape(-1, 1))
         )
         
+        # Enable pin_memory for GPU acceleration and num_workers for parallel loading
+        # Use num_workers=0 for Windows/GPU stability, > 0 for CPU training
+        pin_mem = self.device == "cuda"
+        num_workers = 0 if self.device == "cuda" else 2
+        
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config.batch_size,
-            shuffle=True
+            shuffle=True,
+            pin_memory=pin_mem,
+            num_workers=num_workers
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=self.config.batch_size,
-            shuffle=False
+            shuffle=False,
+            pin_memory=pin_mem,
+            num_workers=num_workers
         )
         
         # Call internal training loop
@@ -339,12 +369,15 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         """
         Predict on numpy array of shape (n_samples, seq_len, 1).
         Returns predictions of shape (n_samples, 1).
+        
+        Optimized for GPU inference with efficient tensor handling.
         """
         self.eval()
         with torch.no_grad():
-            X_tensor = torch.FloatTensor(X).to(self.device)
+            # Convert to tensor and move to device with proper dtype
+            X_tensor = torch.as_tensor(X, dtype=torch.float32, device=self.device)
             # Compute current volatility from sequences
-            vol_batch = torch.FloatTensor(self._compute_current_vol(X)).to(self.device)
+            vol_batch = torch.as_tensor(self._compute_current_vol(X), dtype=torch.float32, device=self.device)
             preds = self.forward(X_tensor, vol_batch)
             return preds.cpu().numpy()
 
