@@ -39,8 +39,8 @@ class DeepEconoNetConfig(BaseConfig):
     
     # Training parameters
     learning_rate: float = 1e-4          # optimizer learning rate
-    epochs: int = 50                     # number of training epochs
-    batch_size: int = 64                 # batch size
+    epochs: int = 20                     # number of training epochs
+    batch_size: int = 256                # batch size
     train_val_ratio: float = 0.8         # train/validation split ratio
     gradient_accumulation_steps: int = 1 # gradient accumulation steps for larger effective batch size
     
@@ -74,10 +74,15 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             # Fallback: use CPU by default
             self.device = "cpu"
         
+        # Optimize cuDNN for faster convolution operations on GPU
+        if self.device == "cuda":
+            torch.backends.cudnn.benchmark = True  # Let cuDNN find optimal algorithms
+        
         # Log device info for debugging
         if self.device == "cuda":
             print(f"Using GPU: {torch.cuda.get_device_name(0)}")
             print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+            print(f"cuDNN benchmark enabled for optimized conv kernels")
 
         # ----- Model Layers -----
         self.conv = nn.Conv1d(
@@ -108,6 +113,14 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
         self.seq_len = self.config.seq_len
         self.to(self.device)
+        
+        # Compile model for faster execution (requires PyTorch 2.0+)
+        # torch.compile() uses graph compilation and kernel fusion for ~10-40% speedup
+        try:
+            self = torch.compile(self)
+        except Exception as e:
+            print(f"⚠️  torch.compile() not available or failed: {e}")
+            print(f"   Continuing with standard execution")
 
 
     # ---------- Forward Pass ----------
