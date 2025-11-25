@@ -46,6 +46,11 @@ class DeepEconoNetConfig(BaseConfig):
     # Device parameters
     device: str = "cpu"                  # "cpu" or "cuda" (auto-detects GPU if available)
     
+    # Loss filtering parameters
+    skip_high_loss: bool = True          # skip training if loss exceeds threshold
+    loss_threshold: float = 1.0          # loss threshold for skipping ticker
+    skip_epochs: int = 2                 # number of initial epochs to check threshold
+    
     # Training history (for plotting)
     training_history: Dict[str, Dict[str, list]] = field(default_factory=dict)  # {ticker: {"train_losses": [...], "val_losses": [...]}}
 
@@ -181,6 +186,8 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         if ticker is not None:
             self.config.training_history[ticker] = {"train_losses": [], "val_losses": []}
         
+        early_epoch_val_losses = []
+        
         for epoch in range(1, epochs + 1):
             self.train()
             total_loss = 0.0
@@ -215,6 +222,17 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                         vbatches += 1
 
                 avg_val_loss = val_loss / vbatches
+                
+                # Track first N epochs val loss for threshold check
+                if epoch <= self.config.skip_epochs:
+                    early_epoch_val_losses.append(avg_val_loss)
+                
+                # Check if all early epochs val loss exceed threshold
+                if epoch == self.config.skip_epochs and self.config.skip_high_loss:
+                    if all(loss > self.config.loss_threshold for loss in early_epoch_val_losses):
+                        if ticker is not None:
+                            print(f"⚠️  Skipping {ticker}: validation loss in first {self.config.skip_epochs} epochs exceeds {self.config.loss_threshold}")
+                        return
                 
                 # Track val loss
                 if ticker is not None:
