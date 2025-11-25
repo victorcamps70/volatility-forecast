@@ -37,14 +37,17 @@ class DeepEconoNetConfig(BaseConfig):
     fc_output_size: int = 1              # output size (1 for volatility prediction)
     
     # Training parameters
-    learning_rate: float = 1e-3          # optimizer learning rate
-    epochs: int = 20                     # number of training epochs
+    learning_rate: float = 5e-5          # optimizer learning rate
+    epochs: int = 30                     # number of training epochs
     batch_size: int = 64                 # batch size
     train_val_ratio: float = 0.8         # train/validation split ratio
     gradient_accumulation_steps: int = 1 # gradient accumulation steps for larger effective batch size
     
     # Device parameters
     device: str = "cpu"                  # "cpu" or "cuda" (auto-detects GPU if available)
+    
+    # Training history (for plotting)
+    training_history: Dict[str, Dict[str, list]] = field(default_factory=dict)  # {ticker: {"train_losses": [...], "val_losses": [...]}}
 
 
 class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
@@ -162,6 +165,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         val_loader: Optional[DataLoader[Tuple[torch.Tensor, torch.Tensor]]] = None,
         epochs: int = 10,
         verbose: bool = True,
+        ticker: Optional[str] = None,
     ) -> None:
         """
         Internal training loop with DataLoaders.
@@ -171,7 +175,12 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             val_loader: optional DataLoader for validation
             epochs: number of training epochs
             verbose: whether to print progress
+            ticker: optional ticker name to track losses
         """
+        # Initialize loss tracking for this ticker
+        if ticker is not None:
+            self.config.training_history[ticker] = {"train_losses": [], "val_losses": []}
+        
         for epoch in range(1, epochs + 1):
             self.train()
             total_loss = 0.0
@@ -183,6 +192,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 batches += 1
 
             avg_train_loss = total_loss / batches
+            
+            # Track train loss
+            if ticker is not None:
+                self.config.training_history[ticker]["train_losses"].append(avg_train_loss)
 
             # ----- Validation -----
             if val_loader is not None:
@@ -202,6 +215,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                         vbatches += 1
 
                 avg_val_loss = val_loss / vbatches
+                
+                # Track val loss
+                if ticker is not None:
+                    self.config.training_history[ticker]["val_losses"].append(avg_val_loss)
 
                 if verbose:
                     print(f"Epoch {epoch}: train={avg_train_loss:.6f}, val={avg_val_loss:.6f}")
@@ -333,7 +350,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         )
         
         # Call internal training loop
-        self._fit_ticker(train_loader, val_loader, epochs=self.config.epochs, verbose=True)
+        self._fit_ticker(train_loader, val_loader, epochs=self.config.epochs, verbose=True, ticker=ticker)
         
         return self
     

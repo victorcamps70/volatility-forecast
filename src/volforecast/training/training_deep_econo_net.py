@@ -38,6 +38,7 @@ import json
 import signal
 from pathlib import Path
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 from src.volforecast.models.deep_econo_net import DeepEconoNet, DeepEconoNetConfig
 
@@ -211,6 +212,98 @@ def list_available_checkpoints():
     return checkpoints
 
 
+def plot_training_history(model, output_dir=None):
+    """Plot training and validation losses for all tickers.
+    
+    Args:
+        model: DeepEconoNet model with training_history
+        output_dir: Optional directory to save plots
+    """
+    if not model.config.training_history:
+        print("No training history to plot.")
+        return
+    
+    # Separate train and val losses
+    train_losses = model.config.training_history
+    
+    # Create output directory if needed
+    if output_dir is None:
+        output_dir = get_checkpoint_dir()
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # ===== TRAIN LOSSES PLOT =====
+    fig_train, ax_train = plt.subplots(figsize=(12, 6))
+    
+    # Find global min/max for normalization
+    all_train_vals = []
+    for ticker_data in train_losses.values():
+        all_train_vals.extend(ticker_data["train_losses"])
+    
+    if all_train_vals:
+        train_min, train_max = min(all_train_vals), max(all_train_vals)
+        train_range = train_max - train_min if train_max > train_min else 1.0
+    else:
+        train_min, train_range = 0.0, 1.0
+    
+    # Plot each ticker
+    for ticker, data in train_losses.items():
+        train_loss = data["train_losses"]
+        if train_loss:
+            # Normalize to [0, 1]
+            normalized = [(v - train_min) / train_range for v in train_loss]
+            epochs = range(1, len(train_loss) + 1)
+            ax_train.plot(epochs, normalized, marker='o', label=ticker, alpha=0.7)
+    
+    ax_train.set_xlabel("Epoch", fontsize=12)
+    ax_train.set_ylabel("Normalized Train Loss", fontsize=12)
+    ax_train.set_title("Training Loss Across Epochs (All Tickers)", fontsize=14, fontweight='bold')
+    ax_train.set_yscale('log')
+    ax_train.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+    ax_train.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    train_path = os.path.join(output_dir, f"train_loss_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+    fig_train.savefig(train_path, dpi=100, bbox_inches='tight')
+    print(f"\n📊 Train loss plot saved: {train_path}")
+    plt.close(fig_train)
+    
+    # ===== VAL LOSSES PLOT =====
+    fig_val, ax_val = plt.subplots(figsize=(12, 6))
+    
+    # Find global min/max for normalization
+    all_val_vals = []
+    for ticker_data in train_losses.values():
+        all_val_vals.extend(ticker_data["val_losses"])
+    
+    if all_val_vals:
+        val_min, val_max = min(all_val_vals), max(all_val_vals)
+        val_range = val_max - val_min if val_max > val_min else 1.0
+    else:
+        val_min, val_range = 0.0, 1.0
+    
+    # Plot each ticker
+    for ticker, data in train_losses.items():
+        val_loss = data["val_losses"]
+        if val_loss:
+            # Normalize to [0, 1]
+            normalized = [(v - val_min) / val_range for v in val_loss]
+            epochs = range(1, len(val_loss) + 1)
+            ax_val.plot(epochs, normalized, marker='s', label=ticker, alpha=0.7)
+    
+    ax_val.set_xlabel("Epoch", fontsize=12)
+    ax_val.set_ylabel("Normalized Validation Loss", fontsize=12)
+    ax_val.set_title("Validation Loss Across Epochs (All Tickers)", fontsize=14, fontweight='bold')
+    ax_val.set_yscale('log')
+    ax_val.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+    ax_val.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    val_path = os.path.join(output_dir, f"val_loss_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+    fig_val.savefig(val_path, dpi=100, bbox_inches='tight')
+    print(f"📊 Validation loss plot saved: {val_path}")
+    plt.close(fig_val)
+
+
 def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_interval=None, config=None):
     """Evaluate training on multiple ticker datasets with real-time error monitoring.
     
@@ -264,6 +357,13 @@ def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_
                 final_model_path_holder = interrupt_model_path
             except Exception as e:
                 print(f"   ❌ Failed to save model: {e}")
+            
+            try:
+                print(f"\n📊 Plotting training history...")
+                plot_training_history(model_for_signal, get_checkpoint_dir())
+                print(f"   ✅ Plots saved to {get_checkpoint_dir()}")
+            except Exception as e:
+                print(f"   ❌ Failed to plot history: {e}")
         
         print("\n" + "=" * 100)
         print("✅ Interrupt handling complete. You can resume with --resume-checkpoint.")
