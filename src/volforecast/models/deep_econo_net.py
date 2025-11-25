@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.amp import autocast, GradScaler
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
@@ -45,6 +46,7 @@ class DeepEconoNetConfig(BaseConfig):
     
     # Device parameters
     device: str = "cpu"                  # "cpu" or "cuda" (auto-detects GPU if available)
+    use_amp: bool = True                 # Use Automatic Mixed Precision for faster training on GPU
     
     # Loss filtering parameters
     skip_high_loss: bool = True          # skip training if loss exceeds threshold
@@ -99,6 +101,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         self.criterion = nn.MSELoss()
         # annotate optimizer with the general Optimizer type so .step has the correct signature
         self.optimizer: optim.Optimizer = optim.Adam(self.parameters(), lr=self.config.learning_rate)
+        
+        # Initialize GradScaler for Automatic Mixed Precision (AMP)
+        # Only used if use_amp=True and device is CUDA
+        self.scaler = GradScaler() if (self.config.use_amp and self.device == "cuda") else None
 
         self.seq_len = self.config.seq_len
         self.to(self.device)
@@ -155,10 +161,20 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         vol_batch = torch.as_tensor(self._compute_current_vol(X_np), dtype=torch.float32, device=self.device)
 
         self.optimizer.zero_grad()
-        preds = self.forward(X_batch, vol_batch)
-        loss = self.criterion(preds, y_batch)
-        loss.backward()
-        self.optimizer.step()
+        
+        # Use Automatic Mixed Precision if enabled and on CUDA
+        if self.scaler is not None:
+            with autocast('cuda', dtype=torch.float16):
+                preds = self.forward(X_batch, vol_batch)
+                loss = self.criterion(preds, y_batch)
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            preds = self.forward(X_batch, vol_batch)
+            loss = self.criterion(preds, y_batch)
+            loss.backward()
+            self.optimizer.step()
 
         return loss.item()
 
@@ -478,7 +494,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             }
         }
 
-    def fit_all_datasets(self, data_dir: str, pattern: str = "*_dataset.csv", verbose: bool = True, shuffle: bool = False, exclude_regex: str = r"^\d") -> "DeepEconoNet":
+    def fit_all_datasets(self, data_dir: str, pattern: str = "*_dataset.csv", verbose: bool = True, shuffle: bool = True, exclude_regex: str = r"^\d") -> "DeepEconoNet":
         """
         Load all CSV files matching the pattern from data_dir and train on each dataset.
         
