@@ -39,7 +39,7 @@ class DeepEconoNetConfig(BaseConfig):
     
     # Training parameters
     learning_rate: float = 1e-4          # optimizer learning rate
-    epochs: int = 20                     # number of training epochs
+    epochs: int = 50                     # number of training epochs
     batch_size: int = 256                # batch size
     train_val_ratio: float = 0.8         # train/validation split ratio
     gradient_accumulation_steps: int = 1 # gradient accumulation steps for larger effective batch size

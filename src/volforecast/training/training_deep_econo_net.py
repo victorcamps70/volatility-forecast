@@ -252,13 +252,12 @@ def plot_training_history(model, output_dir=None):
             # Normalize to [0, 1]
             normalized = [(v - train_min) / train_range for v in train_loss]
             epochs = range(1, len(train_loss) + 1)
-            ax_train.plot(epochs, normalized, marker='o', label=ticker, alpha=0.7)
+            ax_train.plot(epochs, normalized, alpha=0.7)
     
     ax_train.set_xlabel("Epoch", fontsize=12)
     ax_train.set_ylabel("Normalized Train Loss", fontsize=12)
     ax_train.set_title("Training Loss Across Epochs (All Tickers)", fontsize=14, fontweight='bold')
     ax_train.set_yscale('log')
-    ax_train.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
     ax_train.grid(True, alpha=0.3)
     plt.tight_layout()
     
@@ -288,13 +287,12 @@ def plot_training_history(model, output_dir=None):
             # Normalize to [0, 1]
             normalized = [(v - val_min) / val_range for v in val_loss]
             epochs = range(1, len(val_loss) + 1)
-            ax_val.plot(epochs, normalized, marker='s', label=ticker, alpha=0.7)
+            ax_val.plot(epochs, normalized, alpha=0.7)
     
     ax_val.set_xlabel("Epoch", fontsize=12)
     ax_val.set_ylabel("Normalized Validation Loss", fontsize=12)
     ax_val.set_title("Validation Loss Across Epochs (All Tickers)", fontsize=14, fontweight='bold')
     ax_val.set_yscale('log')
-    ax_val.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
     ax_val.grid(True, alpha=0.3)
     plt.tight_layout()
     
@@ -503,6 +501,14 @@ def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_
     )
     print(f"   ✅ Model saved: {os.path.basename(final_model_path)}")
     print(f"   📦 File size: {os.path.getsize(final_model_path) / (1024*1024):.2f} MB")
+    
+    # Generate training plots after successful completion
+    try:
+        print(f"\n📊 Plotting training history...")
+        plot_training_history(model, get_checkpoint_dir())
+        print(f"   ✅ Plots saved to {get_checkpoint_dir()}")
+    except Exception as e:
+        print(f"   ⚠️  Failed to generate plots: {e}")
     
     # Collect results from trained tickers
     trained_tickers = []
