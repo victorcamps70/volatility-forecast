@@ -37,8 +37,8 @@ class DeepEconoNetConfig(BaseConfig):
     fc_output_size: int = 1              # output size (1 for volatility prediction)
     
     # Training parameters
-    learning_rate: float = 5e-5          # optimizer learning rate
-    epochs: int = 30                     # number of training epochs
+    learning_rate: float = 1e-4          # optimizer learning rate
+    epochs: int = 50                     # number of training epochs
     batch_size: int = 64                 # batch size
     train_val_ratio: float = 0.8         # train/validation split ratio
     gradient_accumulation_steps: int = 1 # gradient accumulation steps for larger effective batch size
@@ -223,9 +223,6 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 if verbose:
                     print(f"Epoch {epoch}: train={avg_train_loss:.6f}, val={avg_val_loss:.6f}")
                 
-                # Clear GPU cache if using CUDA for faster validation
-                if self.device == "cuda":
-                    torch.cuda.empty_cache()
 
             else:
                 if verbose:
@@ -332,7 +329,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Enable pin_memory for GPU acceleration and num_workers for parallel loading
         # Use num_workers=0 for Windows/GPU stability, > 0 for CPU training
         pin_mem = self.device == "cuda"
-        num_workers = 0 if self.device == "cuda" else 2
+        num_workers = 0
         
         train_loader = DataLoader(
             train_dataset,
@@ -463,25 +460,30 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             }
         }
 
-    def fit_all_datasets(self, data_dir: str, pattern: str = "*_dataset.csv", verbose: bool = True) -> "DeepEconoNet":
+    def fit_all_datasets(self, data_dir: str, pattern: str = "*_dataset.csv", verbose: bool = True, shuffle: bool = False, exclude_regex: str = r"^\d") -> "DeepEconoNet":
         """
         Load all CSV files matching the pattern from data_dir and train on each dataset.
         
         This method:
         1. Finds all files matching the pattern in data_dir (non-recursive)
-        2. Loads each CSV file as a DataFrame
-        3. Calls fit_ticker() on each DataFrame
+        2. Optionally filters by exclude_regex
+        3. Optionally shuffles the order
+        4. Loads each CSV file as a DataFrame
+        5. Calls fit_ticker() on each DataFrame
         
         Args:
             data_dir: Path to directory containing CSV files
             pattern: Glob pattern to match CSV files (default: "*_dataset.csv")
             verbose: Whether to print progress messages
+            shuffle: Whether to shuffle the file order (default: False)
+            exclude_regex: Regex pattern to exclude files; default r"^\d" excludes tickers starting with a number
             
         Returns:
             self (for method chaining)
         """
         import os
         import glob
+        import re
         
         # Construct search pattern
         search_pattern = os.path.join(data_dir, pattern)
@@ -490,8 +492,23 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         if not files:
             raise FileNotFoundError(f"No files matching '{pattern}' found in: {data_dir}")
         
+        # Filter by exclude_regex if provided
+        if exclude_regex:
+            filtered_files = []
+            for f in files:
+                filename = os.path.basename(f)
+                ticker = filename.replace("_dataset.csv", "").replace(".csv", "")
+                if not re.match(exclude_regex, ticker):
+                    filtered_files.append(f)
+            files = filtered_files
+        
+        # Shuffle if requested
+        if shuffle:
+            import random
+            random.shuffle(files)
+        
         if verbose:
-            print(f"Found {len(files)} file(s) matching pattern '{pattern}'")
+            print(f"Found {len(files)} file(s) matching criteria")
         
         for file_path in files:
             filename = os.path.basename(file_path)

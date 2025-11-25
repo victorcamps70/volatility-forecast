@@ -485,7 +485,9 @@ def evaluate_multi_ticker_training(num_tickers=10, resume_checkpoint=None, save_
         model.fit_all_datasets(
             data_dir=data_dir,
             pattern="*.csv",
-            verbose=True
+            verbose=True,
+            shuffle=args.shuffle,
+            exclude_regex=args.exclude_regex
         )
     except KeyboardInterrupt:
         # Signal handler will catch Ctrl+C and save
@@ -595,6 +597,17 @@ Interrupt Handling:
         choices=['cpu', 'cuda'],
         default='cuda',
         help='Device to train on (default: cuda)'
+    )
+    parser.add_argument(
+        '--shuffle',
+        action='store_true',
+        help='Shuffle ticker order before training'
+    )
+    parser.add_argument(
+        '--exclude-regex',
+        type=str,
+        default=r'^\d',
+        help='Regex pattern to exclude tickers (default: exclude starting with digit)'
     )
     
     args = parser.parse_args()
