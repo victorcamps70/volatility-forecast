@@ -164,4 +164,4 @@ See the [`docs/`](docs/) folder for:
 - Add a filter to the models to see how they perform with it
 - Containerize the project
 
-# END
+# THE END
