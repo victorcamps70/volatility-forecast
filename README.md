@@ -4,6 +4,8 @@ V0.3
 
 This repository compares **GARCH** models versus **Machine Learning** methods for **one-step-ahead volatility forecasting** on equity time series.
 
+Disclaimer: Usage of generative AI for code generation
+
 ## Structure
 
 ```
