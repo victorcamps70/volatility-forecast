@@ -160,6 +160,6 @@ See the [`docs/`](docs/) folder for:
 
 # TODO:
 
-- Code the LSTM Model
-- Test the LSTM Model
 - Import the data loader and test it
+- Add a filter to the models to see how they perform with it
+- Containerize the project
