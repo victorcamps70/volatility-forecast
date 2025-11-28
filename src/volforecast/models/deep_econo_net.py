@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.amp import autocast, GradScaler
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ class DeepEconoNetConfig(BaseConfig):
     conv_padding: int = 2                # padding for convolution
     
     # LSTM parameters
-    lstm_input_size: int = 16            # must match conv_out_channels
+    lstm_input_size: int = conv_out_channels
     lstm_hidden_size: int = 32           # hidden state size
     lstm_num_layers: int = 1             # number of LSTM layers
     
@@ -37,13 +38,23 @@ class DeepEconoNetConfig(BaseConfig):
     fc_output_size: int = 1              # output size (1 for volatility prediction)
     
     # Training parameters
-    learning_rate: float = 1e-3          # optimizer learning rate
-    epochs: int = 10                     # number of training epochs
-    batch_size: int = 32                 # batch size
+    learning_rate: float = 1e-4          # optimizer learning rate
+    epochs: int = 50                     # number of training epochs
+    batch_size: int = 256                # batch size
     train_val_ratio: float = 0.8         # train/validation split ratio
+    gradient_accumulation_steps: int = 1 # gradient accumulation steps for larger effective batch size
     
     # Device parameters
-    device: str = "cpu"                  # "cpu" or "cuda"
+    device: str = "cpu"                  # "cpu" or "cuda" (auto-detects GPU if available)
+    use_amp: bool = True                 # Use Automatic Mixed Precision for faster training on GPU
+    
+    # Loss filtering parameters
+    skip_high_loss: bool = True          # skip training if loss exceeds threshold
+    loss_threshold: float = 1.0          # loss threshold for skipping ticker
+    skip_epochs: int = 2                 # number of initial epochs to check threshold
+    
+    # Training history (for plotting)
+    training_history: Dict[str, Dict[str, list]] = field(default_factory=dict)  # {ticker: {"train_losses": [...], "val_losses": [...]}}
 
 
 class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
@@ -51,8 +62,27 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         super().__init__(config)
         nn.Module.__init__(self)
         
-        # Use GPU if available
-        self.device = self.config.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Initialize device with GPU acceleration if available
+        # Priority: explicit config.device setting > auto-detect GPU > CPU fallback
+        if self.config.device == "cpu":
+            # Explicit CPU request - always use CPU
+            self.device = "cpu"
+        elif self.config.device == "cuda":
+            # GPU requested - use GPU if available, fallback to CPU
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            # Fallback: use CPU by default
+            self.device = "cpu"
+        
+        # Optimize cuDNN for faster convolution operations on GPU
+        if self.device == "cuda":
+            torch.backends.cudnn.benchmark = True  # Let cuDNN find optimal algorithms
+        
+        # Log device info for debugging
+        if self.device == "cuda":
+            print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+            print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+            print(f"cuDNN benchmark enabled for optimized conv kernels")
 
         # ----- Model Layers -----
         self.conv = nn.Conv1d(
@@ -66,22 +96,35 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             input_size=self.config.lstm_input_size,
             hidden_size=self.config.lstm_hidden_size,
             num_layers=self.config.lstm_num_layers,
+            batch_first=False,  # Keep False for current implementation, but optimized for GPU
         )
 
-        self.fc1 = nn.Linear(self.config.lstm_hidden_size, self.config.fc1_hidden_size)
+        self.fc1 = nn.Linear(self.config.lstm_hidden_size + 1, self.config.fc1_hidden_size)
         self.fc2 = nn.Linear(self.config.fc1_hidden_size, self.config.fc_output_size)
 
         # ----- Loss & Optimizer -----
         self.criterion = nn.MSELoss()
         # annotate optimizer with the general Optimizer type so .step has the correct signature
         self.optimizer: optim.Optimizer = optim.Adam(self.parameters(), lr=self.config.learning_rate)
+        
+        # Initialize GradScaler for Automatic Mixed Precision (AMP)
+        # Only used if use_amp=True and device is CUDA
+        self.scaler = GradScaler() if (self.config.use_amp and self.device == "cuda") else None
 
         self.seq_len = self.config.seq_len
         self.to(self.device)
+        
+        # Compile model for faster execution (requires PyTorch 2.0+)
+        # torch.compile() uses graph compilation and kernel fusion for ~10-40% speedup
+        try:
+            self = torch.compile(self)
+        except Exception as e:
+            print(f"⚠️  torch.compile() not available or failed: {e}")
+            print(f"   Continuing with standard execution")
 
 
     # ---------- Forward Pass ----------
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, vol:torch.Tensor) -> torch.Tensor:
         """
         x: (batch, seq_len, 1)
         Returns: (batch, 1)
@@ -95,24 +138,56 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         x = x.transpose(0, 1)        # (seq_len, batch, 16)
 
         _, (h, _) = self.lstm(x)
-        h = h[-1]  # last layer's hidden state: (batch, 32)
+        h = h[-1]                    # last layer's hidden state: (batch, 32)
 
-        x = torch.relu(self.fc1(h))  # (batch, 16)
+        x = torch.concat([h, vol], dim=1)  # (batch, 33) = 32 hidden + 1 volatility
+        x = self.fc1(x)              # (batch, 16)
+        x = torch.relu(x)            # (batch, 16)
         x = self.fc2(x)              # (batch, 1)
 
         return x
 
 
+    # ---------- Volatility Computation ----------
+    @staticmethod
+    def _compute_current_vol(X_seq: np.ndarray) -> np.ndarray:
+        """
+        Compute current realized volatility for each sequence.
+        
+        Args:
+            X_seq: sequences of log returns (batch, seq_len, 1)
+            
+        Returns:
+            current volatility for each sequence (batch, 1)
+        """
+        # RMS of returns in sequence
+        return np.sqrt(np.mean(X_seq[:, :, 0] ** 2, axis=1, keepdims=True))
+
     # ---------- One Training Step ----------
     def train_step(self, X_batch: torch.Tensor, y_batch: torch.Tensor) -> float:
-        X_batch = X_batch.to(self.device)
-        y_batch = y_batch.to(self.device)
+        X_batch = X_batch.to(self.device, dtype=torch.float32)
+        y_batch = y_batch.to(self.device, dtype=torch.float32)
+        
+        # Compute current volatility from sequences
+        # Move to CPU only for numpy computation if on GPU (minimal overhead)
+        X_np = X_batch.cpu().numpy() if self.device == "cuda" else X_batch.numpy()
+        vol_batch = torch.as_tensor(self._compute_current_vol(X_np), dtype=torch.float32, device=self.device)
 
         self.optimizer.zero_grad()
-        preds = self.forward(X_batch)
-        loss = self.criterion(preds, y_batch)
-        loss.backward()
-        self.optimizer.step()
+        
+        # Use Automatic Mixed Precision if enabled and on CUDA
+        if self.scaler is not None:
+            with autocast('cuda', dtype=torch.float16):
+                preds = self.forward(X_batch, vol_batch)
+                loss = self.criterion(preds, y_batch)
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            preds = self.forward(X_batch, vol_batch)
+            loss = self.criterion(preds, y_batch)
+            loss.backward()
+            self.optimizer.step()
 
         return loss.item()
 
@@ -124,6 +199,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         val_loader: Optional[DataLoader[Tuple[torch.Tensor, torch.Tensor]]] = None,
         epochs: int = 10,
         verbose: bool = True,
+        ticker: Optional[str] = None,
     ) -> None:
         """
         Internal training loop with DataLoaders.
@@ -133,7 +209,14 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             val_loader: optional DataLoader for validation
             epochs: number of training epochs
             verbose: whether to print progress
+            ticker: optional ticker name to track losses
         """
+        # Initialize loss tracking for this ticker
+        if ticker is not None:
+            self.config.training_history[ticker] = {"train_losses": [], "val_losses": []}
+        
+        early_epoch_val_losses = []
+        
         for epoch in range(1, epochs + 1):
             self.train()
             total_loss = 0.0
@@ -145,6 +228,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                 batches += 1
 
             avg_train_loss = total_loss / batches
+            
+            # Track train loss
+            if ticker is not None:
+                self.config.training_history[ticker]["train_losses"].append(avg_train_loss)
 
             # ----- Validation -----
             if val_loader is not None:
@@ -153,17 +240,36 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                     val_loss = 0.0
                     vbatches = 0
                     for Xv, yv in val_loader:
-                        Xv = Xv.to(self.device)
-                        yv = yv.to(self.device)
-                        preds = self.forward(Xv)
+                        Xv = Xv.to(self.device, dtype=torch.float32)
+                        yv = yv.to(self.device, dtype=torch.float32)
+                        # Compute current volatility from sequences
+                        Xv_np = Xv.cpu().numpy() if self.device == "cuda" else Xv.numpy()
+                        vol_v = torch.as_tensor(self._compute_current_vol(Xv_np), dtype=torch.float32, device=self.device)
+                        preds = self.forward(Xv, vol_v)
                         loss_v = self.criterion(preds, yv)
                         val_loss += loss_v.item()
                         vbatches += 1
 
                 avg_val_loss = val_loss / vbatches
+                
+                # Track first N epochs val loss for threshold check
+                if epoch <= self.config.skip_epochs:
+                    early_epoch_val_losses.append(avg_val_loss)
+                
+                # Check if all early epochs val loss exceed threshold
+                if epoch == self.config.skip_epochs and self.config.skip_high_loss:
+                    if all(loss > self.config.loss_threshold for loss in early_epoch_val_losses):
+                        if ticker is not None:
+                            print(f"⚠️  Skipping {ticker}: validation loss in first {self.config.skip_epochs} epochs exceeds {self.config.loss_threshold}")
+                        return
+                
+                # Track val loss
+                if ticker is not None:
+                    self.config.training_history[ticker]["val_losses"].append(avg_val_loss)
 
                 if verbose:
                     print(f"Epoch {epoch}: train={avg_train_loss:.6f}, val={avg_val_loss:.6f}")
+                
 
             else:
                 if verbose:
@@ -267,19 +373,28 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             torch.FloatTensor(y_val.reshape(-1, 1))
         )
         
+        # Enable pin_memory for GPU acceleration and num_workers for parallel loading
+        # Use num_workers=0 for Windows/GPU stability, > 0 for CPU training
+        pin_mem = self.device == "cuda"
+        num_workers = 0
+        
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config.batch_size,
-            shuffle=True
+            shuffle=True,
+            pin_memory=pin_mem,
+            num_workers=num_workers
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=self.config.batch_size,
-            shuffle=False
+            shuffle=False,
+            pin_memory=pin_mem,
+            num_workers=num_workers
         )
         
         # Call internal training loop
-        self._fit_ticker(train_loader, val_loader, epochs=self.config.epochs, verbose=True)
+        self._fit_ticker(train_loader, val_loader, epochs=self.config.epochs, verbose=True, ticker=ticker)
         
         return self
     
@@ -315,11 +430,16 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         """
         Predict on numpy array of shape (n_samples, seq_len, 1).
         Returns predictions of shape (n_samples, 1).
+        
+        Optimized for GPU inference with efficient tensor handling.
         """
         self.eval()
         with torch.no_grad():
-            X_tensor = torch.FloatTensor(X).to(self.device)
-            preds = self.forward(X_tensor)
+            # Convert to tensor and move to device with proper dtype
+            X_tensor = torch.as_tensor(X, dtype=torch.float32, device=self.device)
+            # Compute current volatility from sequences
+            vol_batch = torch.as_tensor(self._compute_current_vol(X), dtype=torch.float32, device=self.device)
+            preds = self.forward(X_tensor, vol_batch)
             return preds.cpu().numpy()
 
     def predict(self, df: pd.DataFrame, ticker: Optional[str] = None) -> pd.Series:
@@ -387,25 +507,30 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             }
         }
 
-    def fit_all_datasets(self, data_dir: str, pattern: str = "*_dataset.csv", verbose: bool = True) -> "DeepEconoNet":
+    def fit_all_datasets(self, data_dir: str, pattern: str = "*_dataset.csv", verbose: bool = True, shuffle: bool = True, exclude_regex: str = r"^\d") -> "DeepEconoNet":
         """
         Load all CSV files matching the pattern from data_dir and train on each dataset.
         
         This method:
         1. Finds all files matching the pattern in data_dir (non-recursive)
-        2. Loads each CSV file as a DataFrame
-        3. Calls fit_ticker() on each DataFrame
+        2. Optionally filters by exclude_regex
+        3. Optionally shuffles the order
+        4. Loads each CSV file as a DataFrame
+        5. Calls fit_ticker() on each DataFrame
         
         Args:
             data_dir: Path to directory containing CSV files
             pattern: Glob pattern to match CSV files (default: "*_dataset.csv")
             verbose: Whether to print progress messages
+            shuffle: Whether to shuffle the file order (default: False)
+            exclude_regex: Regex pattern to exclude files; default r"^\d" excludes tickers starting with a number
             
         Returns:
             self (for method chaining)
         """
         import os
         import glob
+        import re
         
         # Construct search pattern
         search_pattern = os.path.join(data_dir, pattern)
@@ -414,8 +539,23 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         if not files:
             raise FileNotFoundError(f"No files matching '{pattern}' found in: {data_dir}")
         
+        # Filter by exclude_regex if provided
+        if exclude_regex:
+            filtered_files = []
+            for f in files:
+                filename = os.path.basename(f)
+                ticker = filename.replace("_dataset.csv", "").replace(".csv", "")
+                if not re.match(exclude_regex, ticker):
+                    filtered_files.append(f)
+            files = filtered_files
+        
+        # Shuffle if requested
+        if shuffle:
+            import random
+            random.shuffle(files)
+        
         if verbose:
-            print(f"Found {len(files)} file(s) matching pattern '{pattern}'")
+            print(f"Found {len(files)} file(s) matching criteria")
         
         for file_path in files:
             filename = os.path.basename(file_path)
