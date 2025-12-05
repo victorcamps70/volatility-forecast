@@ -6,6 +6,7 @@ from src.volforecast.models.elasticnet_regression_model import ElasticNetVolMode
 from src.volforecast.models.garch_model import GARCHVolModel, GARCHConfig
 from src.volforecast.models.xgboost_model import XGBoostConfig, XGBoostVolModel
 from src.volforecast.features.builders import FeatureBuilder
+from src.volforecast.data.preprocessor import FeaturePreprocessor, PreprocessingConfig
 from src.volforecast.evaluation.backtest import rolling_backtest
 from src.volforecast.visualization.plot import plot_and_save_volatility_forecast
 
@@ -134,6 +135,29 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
     df = df.rename(columns={"Date": "date"}).sort_values("date").set_index("date")
     train_start = df.index.min()
     train_end = df.index[burning_period]
+
+    # ---------Preprocessing (winsorization + EWMA)------------------------------
+    print(f"Applying data preprocessing (winsorization + EWMA) ...")
+    preprocessing_cfg = PreprocessingConfig(
+        apply_winsorization=True,
+        winsorize_lower=0.01,
+        winsorize_upper=0.99,
+        apply_ewma=True,
+        ewma_span=20,
+    )
+    preprocessor = FeaturePreprocessor(preprocessing_cfg)
+    
+    # Split data by train_end to apply preprocessing parameters
+    train_data = df.loc[:train_end].copy()
+    test_data = df.loc[train_end:].copy()
+    
+    # Fit preprocessing on train data and apply to both
+    train_data = preprocessor.preprocess(train_data, ticker=ticker, fit_params=True)
+    test_data = preprocessor.preprocess(test_data, ticker=ticker, fit_params=False)
+    
+    # Recombine datasets
+    df = pd.concat([train_data, test_data])
+    print(f"Preprocessing complete. Preprocessed columns: {preprocessor.get_preprocessing_info()}")
 
     # --------Creating models----------------------------
     # Shared config

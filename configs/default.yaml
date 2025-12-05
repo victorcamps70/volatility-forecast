@@ -5,6 +5,13 @@ dataset:
   vix_col: null
   market_close_col: null
 
+preprocessing:
+  apply_winsorization: true
+  winsorize_lower: 0.01 # 1st percentile
+  winsorize_upper: 0.99 # 99th percentile
+  apply_ewma: true
+  ewma_span: 20 # span parameter for exponential weighted moving average (None to skip)
+
 modeling:
   target: "next_squared_return_stock" # or "5_day_ahead_return_stock"
 
