@@ -21,7 +21,8 @@ dependencies = [
   "matplotlib",
   "jupyter",
   "xgboost",
-  "pytorch"
+  "pytest",
+  "torch"
 ]
 
 [project.optional-dependencies]

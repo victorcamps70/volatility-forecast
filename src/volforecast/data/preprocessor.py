@@ -88,11 +88,7 @@ class FeaturePreprocessor:
         Returns:
             EWMA-filtered series.
         """
-        # Handle NaN values before and after EWMA
-        result = series.ewm(span=span, adjust=False).mean()
-        # Forward-fill any remaining NaN values from the beginning
-        result = result.bfill().ffill()
-        return result
+        return series.ewm(span=span, adjust=False).mean()
 
     def preprocess(
         self,
@@ -174,9 +170,6 @@ class FeaturePreprocessor:
                 "columns": cols,
             }
 
-        # Fill any remaining NaN values with forward/backward fill
-        work = work.bfill().ffill()
-        
         return work
 
     def preprocess_by_ticker(
