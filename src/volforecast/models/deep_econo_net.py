@@ -55,6 +55,7 @@ class DeepEconoNetConfig(BaseConfig):
     
     # Training history (for plotting)
     training_history: Dict[str, Dict[str, list]] = field(default_factory=dict)  # {ticker: {"train_losses": [...], "val_losses": [...]}}
+    training_order: list = field(default_factory=list)  # List of tickers in order they were trained
 
 
 class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
@@ -216,6 +217,9 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Initialize loss tracking for this ticker
         if ticker is not None:
             self.config.training_history[ticker] = {"train_losses": [], "val_losses": []}
+            # Track training order (only add if not already present)
+            if ticker not in self.config.training_order:
+                self.config.training_order.append(ticker)
         
         early_epoch_val_losses = []
         

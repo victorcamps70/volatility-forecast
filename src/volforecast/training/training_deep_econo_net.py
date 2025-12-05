@@ -213,7 +213,7 @@ def list_available_checkpoints():
 
 
 def plot_training_history(model, output_dir=None):
-    """Plot training and validation losses for all tickers.
+    """Plot training and validation losses for all tickers with color gradient by training order.
     
     Args:
         model: DeepEconoNet model with training_history
@@ -231,6 +231,14 @@ def plot_training_history(model, output_dir=None):
         output_dir = get_checkpoint_dir()
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
+    # Create color gradient: blue to orange based on training order
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap = LinearSegmentedColormap.from_list('training_order', ['#0000FF', '#FF8C00'])
+    
+    # Use training_order to get ticker sequence; fallback to dict keys if empty
+    tickers = model.config.training_order if model.config.training_order else list(train_losses.keys())
+    n_tickers = len(tickers)
+    
     # ===== TRAIN LOSSES PLOT =====
     fig_train, ax_train = plt.subplots(figsize=(12, 6))
     
@@ -245,14 +253,18 @@ def plot_training_history(model, output_dir=None):
     else:
         train_min, train_range = 0.0, 1.0
     
-    # Plot each ticker
-    for ticker, data in train_losses.items():
-        train_loss = data["train_losses"]
-        if train_loss:
-            # Normalize to [0, 1]
-            normalized = [(v - train_min) / train_range for v in train_loss]
-            epochs = range(1, len(train_loss) + 1)
-            ax_train.plot(epochs, normalized, alpha=0.7)
+    # Plot each ticker with color based on training order position
+    for i, ticker in enumerate(tickers):
+        if ticker in train_losses:
+            data = train_losses[ticker]
+            train_loss = data["train_losses"]
+            if train_loss:
+                # Normalize to [0, 1]
+                normalized = [(v - train_min) / train_range for v in train_loss]
+                epochs = range(1, len(train_loss) + 1)
+                # Map color based on position: 0 = blue, 1 = orange
+                color = cmap(i / max(n_tickers - 1, 1))
+                ax_train.plot(epochs, normalized, color=color, alpha=0.7)
     
     ax_train.set_xlabel("Epoch", fontsize=12)
     ax_train.set_ylabel("Normalized Train Loss", fontsize=12)
@@ -280,14 +292,18 @@ def plot_training_history(model, output_dir=None):
     else:
         val_min, val_range = 0.0, 1.0
     
-    # Plot each ticker
-    for ticker, data in train_losses.items():
-        val_loss = data["val_losses"]
-        if val_loss:
-            # Normalize to [0, 1]
-            normalized = [(v - val_min) / val_range for v in val_loss]
-            epochs = range(1, len(val_loss) + 1)
-            ax_val.plot(epochs, normalized, alpha=0.7)
+    # Plot each ticker with color based on training order position
+    for i, ticker in enumerate(tickers):
+        if ticker in train_losses:
+            data = train_losses[ticker]
+            val_loss = data["val_losses"]
+            if val_loss:
+                # Normalize to [0, 1]
+                normalized = [(v - val_min) / val_range for v in val_loss]
+                epochs = range(1, len(val_loss) + 1)
+                # Map color based on position: 0 = blue, 1 = orange
+                color = cmap(i / max(n_tickers - 1, 1))
+                ax_val.plot(epochs, normalized, color=color, alpha=0.7)
     
     ax_val.set_xlabel("Epoch", fontsize=12)
     ax_val.set_ylabel("Normalized Validation Loss", fontsize=12)
