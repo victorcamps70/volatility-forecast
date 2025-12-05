@@ -161,6 +161,5 @@ See the [`docs/`](docs/) folder for:
 # TODO:
 
 - Import the data loader and test it
-- Add a filter to the models to see how they perform with it
 - Containerize the project
 - For Saïd: adapt the nn to compare it to other models

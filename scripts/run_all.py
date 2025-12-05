@@ -13,26 +13,26 @@ from src.volforecast.visualization.plot import plot_and_save_volatility_forecast
 
 TICKERS = [
     "AAPL",
-    "AXP",
-    "AMZN",
-    "AVGO",
-    "CAT",
-    "CSCO",
-    "KO",
-    "GOOGL",
-    "GS",
-    "JPM",
-    "MA",
-    "META",
-    "MSFT",
-    "NFLX",
-    "NVDA",
-    "QCOM",
-    "TSLA",
-    "UBER",
+    # "AXP",
+    # "AMZN",
+    # "AVGO",
+    # "CAT",
+    # "CSCO",
+    # "KO",
+    # "GOOGL",
+    # "GS",
+    # "JPM",
+    # "MA",
+    # "META",
+    # "MSFT",
+    # "NFLX",
+    # "NVDA",
+    # "QCOM",
+    # "TSLA",
+    # "UBER",
 ]  # 15 biggest american capitalisations
 
-METRICS_CSV = Path("reports") / "metrics_summary.csv"
+METRICS_CSV = Path("reports") / "new_metrics_summary.csv"
 LAST_YEAR_DAYS = 250
 
 
@@ -146,18 +146,25 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
         ewma_span=20,
     )
     preprocessor = FeaturePreprocessor(preprocessing_cfg)
-    
+
     # Split data by train_end to apply preprocessing parameters
-    train_data = df.loc[:train_end].copy()
-    test_data = df.loc[train_end:].copy()
-    
+    # Use .iloc to get by position to avoid duplicate index issues
+    train_end_idx = burning_period
+    train_data = df.iloc[:train_end_idx].copy()
+    test_data = df.iloc[train_end_idx:].copy()
+
     # Fit preprocessing on train data and apply to both
     train_data = preprocessor.preprocess(train_data, ticker=ticker, fit_params=True)
     test_data = preprocessor.preprocess(test_data, ticker=ticker, fit_params=False)
-    
-    # Recombine datasets
+
+    # Recombine datasets - sort to restore original order
     df = pd.concat([train_data, test_data])
+    df = df.sort_index()
+    # Remove duplicate index rows if they exist after concatenation
+    if df.index.duplicated().any():
+        df = df[~df.index.duplicated(keep="first")]
     print(f"Preprocessing complete. Preprocessed columns: {preprocessor.get_preprocessing_info()}")
+
 
     # --------Creating models----------------------------
     # Shared config
@@ -274,7 +281,7 @@ def run_for_ticker(ticker: str) -> pd.DataFrame:
         last_year_results = keep_last_year_in_results(model_results)
         plot_and_save_volatility_forecast(
             last_year_results,
-            title=f"{ticker}_{name}_Next-Day_Volatility_Forecast",
+            title=f"new_{ticker}_{name}_Next-Day_Volatility_Forecast",
             save=True,
             show=False,
             plot_as_vol=True,
