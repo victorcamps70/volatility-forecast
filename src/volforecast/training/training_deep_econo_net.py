@@ -108,7 +108,11 @@ def load_training_checkpoint(checkpoint_path, device='cpu'):
         model: Loaded model
         checkpoint: Full checkpoint dict with training state
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    except TypeError:
+        # Fallback for older PyTorch versions
+        checkpoint = torch.load(checkpoint_path, map_location=device)
     
     # Recreate model with saved config
     config_dict = checkpoint['model_config']

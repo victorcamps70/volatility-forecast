@@ -217,9 +217,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Initialize loss tracking for this ticker
         if ticker is not None:
             self.config.training_history[ticker] = {"train_losses": [], "val_losses": []}
-            # Track training order (only add if not already present)
-            if ticker not in self.config.training_order:
-                self.config.training_order.append(ticker)
+            self.config.training_order.append(ticker)
         
         early_epoch_val_losses = []
         
@@ -435,7 +433,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
     def predict_array(self, X: np.ndarray) -> np.ndarray:
         """
         Predict on numpy array of shape (n_samples, seq_len, 1).
-        Returns predictions of shape (n_samples, 1).
+        Returns predictions of shape (n_samples, 1) converted from log-variance to volatility.
         
         Optimized for GPU inference with efficient tensor handling.
         """
@@ -446,7 +444,9 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             # Compute current volatility from sequences
             vol_batch = torch.as_tensor(self._compute_current_vol(X), dtype=torch.float32, device=self.device)
             preds = self.forward(X_tensor, vol_batch)
-            return preds.cpu().numpy()
+            preds_np = preds.cpu().numpy()
+            # Convert from log-variance back to volatility: vol = sqrt(exp(log_var)/2)
+            return np.sqrt(np.exp(preds_np/2))
 
     def predict(self, df: pd.DataFrame, ticker: Optional[str] = None) -> pd.Series:
         """
@@ -478,6 +478,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Denormalize predictions if scaling was applied
         if self.config.scale_features and (target_mu != 0.0 or target_sigma != 1.0):
             preds = preds * target_sigma + target_mu
+        
+        # Convert from log-variance back to volatility
+        # preds is in log-variance space, so: vol = sqrt(exp(log_var))
+        preds = np.sqrt(np.exp(preds/2))
         
         # Align predictions with original dataframe index
         # Predictions start at index seq_len
