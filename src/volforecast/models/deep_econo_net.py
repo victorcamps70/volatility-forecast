@@ -127,6 +127,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
     def forward(self, x: torch.Tensor, vol:torch.Tensor) -> torch.Tensor:
         """
         x: (batch, seq_len, 1)
+        vol: (batch, 1) - log-variance feature
         Returns: (batch, 1)
         """
         # Conv1d expects (batch, channels, seq_len)
@@ -140,7 +141,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         _, (h, _) = self.lstm(x)
         h = h[-1]                    # last layer's hidden state: (batch, 32)
 
-        x = torch.concat([h, vol], dim=1)  # (batch, 33) = 32 hidden + 1 volatility
+        x = torch.concat([h, vol], dim=1)  # (batch, 33) = 32 hidden + 1 log-variance
         x = self.fc1(x)              # (batch, 16)
         x = torch.relu(x)            # (batch, 16)
         x = self.fc2(x)              # (batch, 1)
@@ -148,20 +149,21 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         return x
 
 
-    # ---------- Volatility Computation ----------
+    # ---------- Log-Variance Computation ----------
     @staticmethod
     def _compute_current_vol(X_seq: np.ndarray) -> np.ndarray:
         """
-        Compute current realized volatility for each sequence.
+        Compute current log-variance for each sequence.
         
         Args:
             X_seq: sequences of log returns (batch, seq_len, 1)
             
         Returns:
-            current volatility for each sequence (batch, 1)
+            current log-variance for each sequence (batch, 1)
         """
-        # RMS of returns in sequence
-        return np.sqrt(np.mean(X_seq[:, :, 0] ** 2, axis=1, keepdims=True))
+        # Log-variance: log(mean of squared returns)
+        variance = np.mean(X_seq[:, :, 0] ** 2, axis=1, keepdims=True)
+        return np.log(variance + 1e-8)
 
     # ---------- One Training Step ----------
     def train_step(self, X_batch: torch.Tensor, y_batch: torch.Tensor) -> float:
@@ -482,14 +484,14 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         return pred_series.reindex(df.index)
 
     def build_target(self, df: pd.DataFrame) -> pd.Series:
-        """Override BaseVolModel.build_target to use RealVol_5d if available."""
+        """Override BaseVolModel.build_target to use log-variance of RealVol_5d if available."""
         target_col = "RealVol_5d"
         if target_col in df.columns:
-            y = df[target_col].copy()
+            y = np.log(df[target_col].copy() ** 2 + 1e-8)  # log-variance
         else:
-            # Fallback to realized volatility (squared returns)
+            # Fallback to log-variance of squared returns
             r = df[self.config.return_col]
-            y = (r ** 2).shift(-self.config.target_shift)
+            y = np.log((r ** 2).shift(-self.config.target_shift) + 1e-8)
         return y.rename("y_true")
 
     def summary(self) -> Dict[str, Any]:
