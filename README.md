@@ -163,3 +163,5 @@ See the [`docs/`](docs/) folder for:
 - Import the data loader and test it
 - Containerize the project
 - For Saïd: adapt the nn to compare it to other models
+
+# THE END
