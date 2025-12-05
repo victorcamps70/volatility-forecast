@@ -242,32 +242,19 @@ def plot_training_history(model, output_dir=None):
     # ===== TRAIN LOSSES PLOT =====
     fig_train, ax_train = plt.subplots(figsize=(12, 6))
     
-    # Find global min/max for normalization
-    all_train_vals = []
-    for ticker_data in train_losses.values():
-        all_train_vals.extend(ticker_data["train_losses"])
-    
-    if all_train_vals:
-        train_min, train_max = min(all_train_vals), max(all_train_vals)
-        train_range = train_max - train_min if train_max > train_min else 1.0
-    else:
-        train_min, train_range = 0.0, 1.0
-    
     # Plot each ticker with color based on training order position
     for i, ticker in enumerate(tickers):
         if ticker in train_losses:
             data = train_losses[ticker]
             train_loss = data["train_losses"]
             if train_loss:
-                # Normalize to [0, 1]
-                normalized = [(v - train_min) / train_range for v in train_loss]
                 epochs = range(1, len(train_loss) + 1)
                 # Map color based on position: 0 = blue, 1 = orange
                 color = cmap(i / max(n_tickers - 1, 1))
-                ax_train.plot(epochs, normalized, color=color, alpha=0.7)
+                ax_train.plot(epochs, train_loss, color=color, alpha=0.7)
     
     ax_train.set_xlabel("Epoch", fontsize=12)
-    ax_train.set_ylabel("Normalized Train Loss", fontsize=12)
+    ax_train.set_ylabel("Train Loss", fontsize=12)
     ax_train.set_title("Training Loss Across Epochs (All Tickers)", fontsize=14, fontweight='bold')
     ax_train.set_yscale('log')
     ax_train.grid(True, alpha=0.3)
@@ -281,32 +268,19 @@ def plot_training_history(model, output_dir=None):
     # ===== VAL LOSSES PLOT =====
     fig_val, ax_val = plt.subplots(figsize=(12, 6))
     
-    # Find global min/max for normalization
-    all_val_vals = []
-    for ticker_data in train_losses.values():
-        all_val_vals.extend(ticker_data["val_losses"])
-    
-    if all_val_vals:
-        val_min, val_max = min(all_val_vals), max(all_val_vals)
-        val_range = val_max - val_min if val_max > val_min else 1.0
-    else:
-        val_min, val_range = 0.0, 1.0
-    
     # Plot each ticker with color based on training order position
     for i, ticker in enumerate(tickers):
         if ticker in train_losses:
             data = train_losses[ticker]
             val_loss = data["val_losses"]
             if val_loss:
-                # Normalize to [0, 1]
-                normalized = [(v - val_min) / val_range for v in val_loss]
                 epochs = range(1, len(val_loss) + 1)
                 # Map color based on position: 0 = blue, 1 = orange
                 color = cmap(i / max(n_tickers - 1, 1))
-                ax_val.plot(epochs, normalized, color=color, alpha=0.7)
+                ax_val.plot(epochs, val_loss, color=color, alpha=0.7)
     
     ax_val.set_xlabel("Epoch", fontsize=12)
-    ax_val.set_ylabel("Normalized Validation Loss", fontsize=12)
+    ax_val.set_ylabel("Validation Loss", fontsize=12)
     ax_val.set_title("Validation Loss Across Epochs (All Tickers)", fontsize=14, fontweight='bold')
     ax_val.set_yscale('log')
     ax_val.grid(True, alpha=0.3)
