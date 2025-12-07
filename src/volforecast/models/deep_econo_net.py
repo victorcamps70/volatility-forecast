@@ -50,12 +50,55 @@ class DeepEconoNetConfig(BaseConfig):
     
     # Loss filtering parameters
     skip_high_loss: bool = True          # skip training if loss exceeds threshold
-    loss_threshold: float = 1.0          # loss threshold for skipping ticker
+    loss_threshold: float = 10.0          # loss threshold for skipping ticker
     skip_epochs: int = 2                 # number of initial epochs to check threshold
     
     # Training history (for plotting)
     training_history: Dict[str, Dict[str, list]] = field(default_factory=dict)  # {ticker: {"train_losses": [...], "val_losses": [...]}}
     training_order: list = field(default_factory=list)  # List of tickers in order they were trained
+
+
+class QLikeLoss(nn.Module):
+    """Custom QLIKE loss function for volatility prediction.
+    
+    Note: Model outputs log-variance, but QLIKE works with variance.
+    This class converts log-variance back to variance for QLIKE computation.
+    """
+    
+    def __init__(self, epsilon: float = 1e-12):
+        super().__init__()
+        self.epsilon = epsilon
+    
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        """
+        Compute QLIKE loss in a differentiable way.
+        
+        QLIKE = mean(y_true / y_pred - log(y_true / y_pred) - 1)
+        
+        Args:
+            y_pred: Predicted values in log-variance space (batch_size, 1)
+            y_true: True values in log-variance space (batch_size, 1)
+        
+        Returns:
+            Scalar loss value
+        """
+        # Flatten to 1D
+        y_pred = y_pred.reshape(-1)
+        y_true = y_true.reshape(-1)
+        
+        # Convert from log-variance to variance: var = exp(log_var/2)
+        y_pred_var = torch.exp(y_pred/2)
+        y_true_var = torch.exp(y_true/2)
+        
+        # Clip to prevent log(0) and division issues
+        y_pred_var = torch.clamp(y_pred_var, min=self.epsilon)
+        y_true_var = torch.clamp(y_true_var, min=self.epsilon)
+        
+        # Compute QLIKE loss: mean(y_true/y_pred - log(y_true/y_pred) - 1)
+        ratio = y_true_var / y_pred_var
+        loss = torch.mean(ratio - torch.log(ratio) - 1)
+        
+        return loss
 
 
 class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
@@ -104,7 +147,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         self.fc2 = nn.Linear(self.config.fc1_hidden_size, self.config.fc_output_size)
 
         # ----- Loss & Optimizer -----
-        self.criterion = nn.MSELoss()
+        self.criterion = QLikeLoss()
         # annotate optimizer with the general Optimizer type so .step has the correct signature
         self.optimizer: optim.Optimizer = optim.Adam(self.parameters(), lr=self.config.learning_rate)
         
