@@ -71,7 +71,7 @@ def test_tensor_dtype_optimization():
     
     # Test 2.2: Volatility tensor on correct device
     print("\n2.2 Testing volatility tensor placement...")
-    vol = torch.as_tensor(model._compute_current_vol(X_test), dtype=torch.float32, device=model.device)
+    vol = torch.as_tensor(model._compute_current_logRV(X_test), dtype=torch.float32, device=model.device)
     
     assert vol.dtype == torch.float32, "Vol dtype should be float32"
     assert str(vol.device).startswith(model.device), f"Vol should be on {model.device}"
@@ -218,7 +218,7 @@ def test_forward_pass_optimization():
     
     print(f"\n5.1 Testing forward pass with batch size {batch_size}...")
     X_tensor = torch.as_tensor(X_batch, dtype=torch.float32, device=device)
-    vol_batch = torch.as_tensor(model._compute_current_vol(X_batch), dtype=torch.float32, device=device)
+    vol_batch = torch.as_tensor(model._compute_current_logRV(X_batch), dtype=torch.float32, device=device)
     
     # Forward pass
     output = model.forward(X_tensor, vol_batch)
@@ -357,7 +357,7 @@ def test_device_consistency():
     model.eval()
     with torch.no_grad():
         X_tensor = torch.as_tensor(X_test, dtype=torch.float32, device=device)
-        vol = torch.as_tensor(model._compute_current_vol(X_test), dtype=torch.float32, device=device)
+        vol = torch.as_tensor(model._compute_current_logRV(X_test), dtype=torch.float32, device=device)
         output = model.forward(X_tensor, vol)
     
     # Check device string (cuda:0 contains cuda)

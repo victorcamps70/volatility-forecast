@@ -14,7 +14,6 @@ from src.volforecast.models.base import BaseConfig, BaseVolModel
 class DeepEconoNetConfig(BaseConfig):
     """Configuration for DeepEconoNet model."""
     # Target parameters
-    #target_shift: int = 1                # days to shift for target calculation
     #use_log_target: bool = True
     scale_features: bool = True
     scales: Dict[str, Tuple[Tuple[float, float], Tuple[float, float]]] = field(default_factory=dict)  # {ticker: ((returns_mu, returns_sigma), (target_mu, target_sigma))}
@@ -168,10 +167,10 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
 
     # ---------- Forward Pass ----------
-    def forward(self, x: torch.Tensor, vol:torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, logRV:torch.Tensor) -> torch.Tensor:
         """
         x: (batch, seq_len, 1)
-        vol: (batch, 1) - log-variance feature
+        logRV: (batch, 1) - log-variance feature
         Returns: (batch, 1)
         """
         # Conv1d expects (batch, channels, seq_len)
@@ -185,7 +184,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         _, (h, _) = self.lstm(x)
         h = h[-1]                    # last layer's hidden state: (batch, 32)
 
-        x = torch.concat([h, vol], dim=1)  # (batch, 33) = 32 hidden + 1 log-variance
+        x = torch.concat([h, logRV], dim=1)  # (batch, 33) = 32 hidden + 1 log-variance
         x = self.fc1(x)              # (batch, 16)
         x = torch.relu(x)            # (batch, 16)
         x = self.fc2(x)              # (batch, 1)
@@ -195,7 +194,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
 
     # ---------- Log-Variance Computation ----------
     @staticmethod
-    def _compute_current_vol(X_seq: np.ndarray) -> np.ndarray:
+    def _compute_current_logRV(X_seq: np.ndarray) -> np.ndarray:
         """
         Compute current log-variance for each sequence.
         
@@ -217,20 +216,20 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Compute current volatility from sequences
         # Move to CPU only for numpy computation if on GPU (minimal overhead)
         X_np = X_batch.cpu().numpy() if self.device == "cuda" else X_batch.numpy()
-        vol_batch = torch.as_tensor(self._compute_current_vol(X_np), dtype=torch.float32, device=self.device)
+        logRV = torch.as_tensor(self._compute_current_logRV(X_np), dtype=torch.float32, device=self.device)
 
         self.optimizer.zero_grad()
         
         # Use Automatic Mixed Precision if enabled and on CUDA
         if self.scaler is not None:
             with autocast('cuda', dtype=torch.float16):
-                preds = self.forward(X_batch, vol_batch)
+                preds = self.forward(X_batch, logRV)
                 loss = self.criterion(preds, y_batch)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
-            preds = self.forward(X_batch, vol_batch)
+            preds = self.forward(X_batch, logRV)
             loss = self.criterion(preds, y_batch)
             loss.backward()
             self.optimizer.step()
@@ -291,8 +290,8 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
                         yv = yv.to(self.device, dtype=torch.float32)
                         # Compute current volatility from sequences
                         Xv_np = Xv.cpu().numpy() if self.device == "cuda" else Xv.numpy()
-                        vol_v = torch.as_tensor(self._compute_current_vol(Xv_np), dtype=torch.float32, device=self.device)
-                        preds = self.forward(Xv, vol_v)
+                        logRV = torch.as_tensor(self._compute_current_logRV(Xv_np), dtype=torch.float32, device=self.device)
+                        preds = self.forward(Xv, logRV)
                         loss_v = self.criterion(preds, yv)
                         val_loss += loss_v.item()
                         vbatches += 1
@@ -384,7 +383,7 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         log_returns = df[self.config.return_col].to_numpy(dtype=np.float32).reshape(-1)
         
         # Extract target (realized volatility) as raw values
-        target_series = self.build_target(df)
+        target_series = self.build_target(df, log_var=True)
         target = target_series.to_numpy(dtype=np.float32).reshape(-1)
         
         # Apply scaling only if enabled in config
@@ -485,11 +484,11 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             # Convert to tensor and move to device with proper dtype
             X_tensor = torch.as_tensor(X, dtype=torch.float32, device=self.device)
             # Compute current volatility from sequences
-            vol_batch = torch.as_tensor(self._compute_current_vol(X), dtype=torch.float32, device=self.device)
-            preds = self.forward(X_tensor, vol_batch)
+            logRV = torch.as_tensor(self._compute_current_logRV(X), dtype=torch.float32, device=self.device)
+            preds = self.forward(X_tensor, logRV)
             preds_np = preds.cpu().numpy()
-            # Convert from log-variance back to volatility: vol = sqrt(exp(log_var)/2)
-            return np.sqrt(np.exp(preds_np/2))
+            # Convert from log-variance back to volatility: vol = exp(log_var/2)
+            return np.exp(preds_np/2)
 
     def predict(self, df: pd.DataFrame, ticker: Optional[str] = None) -> pd.Series:
         """
@@ -523,8 +522,8 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
             preds = preds * target_sigma + target_mu
         
         # Convert from log-variance back to volatility
-        # preds is in log-variance space, so: vol = sqrt(exp(log_var))
-        preds = np.sqrt(np.exp(preds/2))
+        # preds is in log-variance space, so: vol = exp(log_var/2)
+        preds = np.exp(preds/2)
         
         # Align predictions with original dataframe index
         # Predictions start at index seq_len
@@ -534,15 +533,23 @@ class DeepEconoNet(BaseVolModel[DeepEconoNetConfig], nn.Module):
         # Reindex to full length with NaNs for missing predictions
         return pred_series.reindex(df.index)
 
-    def build_target(self, df: pd.DataFrame) -> pd.Series:
+    def build_target(self, df: pd.DataFrame, log_var: bool = False) -> pd.Series:
         """Override BaseVolModel.build_target to use log-variance of RealVol_5d if available."""
         target_col = "RealVol_5d"
         if target_col in df.columns:
-            y = np.log(df[target_col].copy() ** 2 + 1e-8)  # log-variance
+            if log_var:
+                # Return log-variance of the target
+                y = np.log(df[target_col].copy() ** 2 + 1e-8)  # log-variance
+            else:
+                y = df[target_col].copy()
         else:
-            # Fallback to log-variance of squared returns
-            r = df[self.config.return_col]
-            y = np.log((r ** 2).shift(-self.config.target_shift) + 1e-8)
+            if log_var:
+                # Fallback to log-variance of squared returns
+                r = df[self.config.return_col]
+                y = np.log((r ** 2).shift(-self.config.target_shift) + 1e-8)
+            else:
+                r = df[self.config.return_col]
+                y = abs(r)
         return y.rename("y_true")
 
     def summary(self) -> Dict[str, Any]:

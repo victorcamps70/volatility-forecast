@@ -14,7 +14,7 @@ model = DeepEconoNet(config)
 # Test 1: Volatility computation
 print("Test 1: Volatility computation")
 X_test = np.random.randn(4, 20, 1).astype(np.float32)  # (batch=4, seq_len=20, features=1)
-vol = model._compute_current_vol(X_test)
+vol = model._compute_current_logRV(X_test)
 print(f"  Input shape: {X_test.shape}")
 print(f"  Output shape: {vol.shape}")
 print(f"  Expected: (4, 1), Got: {vol.shape}")
